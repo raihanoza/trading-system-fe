@@ -25,6 +25,7 @@ export interface Signal {
   position_idr: number;
   gates_passed: string[];
   gates_failed: string[];
+  optional_passed?: string[]; // Fase 3 — optional gates yang lolos (undefined utk sinyal lama)
   wyckoff: string | null;
   reason: string;
   created_at?: string;
@@ -93,12 +94,82 @@ export interface SRLevel {
   touches: number;
 }
 
+// ── Signal Evidence (Fase 2) ────────────────────────────────────────────────
+export interface EvidenceFVG {
+  top: number;
+  bottom: number;
+  direction: "bullish" | "bearish";
+  formed_at: string;
+  filled: boolean;
+}
+
+export interface EvidenceSweep {
+  level: number;
+  direction: "bullish_sweep" | "bearish_sweep";
+  time: string;
+  recovery_pct: number;
+}
+
+export interface EvidenceStructure {
+  event: "BOS" | "CHoCH" | "MSS";
+  direction: "bullish" | "bearish";
+  level: number;
+  time: string;
+}
+
+export type FreshnessZone =
+  | "below_sl"
+  | "at_risk"
+  | "near_entry"
+  | "in_progress"
+  | "past_tp";
+export type FreshnessVerdict =
+  | "actionable"
+  | "chasing"
+  | "invalidated"
+  | "resolved";
+
+export interface Freshness {
+  current_price: number;
+  entry: number;
+  stop_loss: number;
+  take_profit: number;
+  direction: "long" | "short";
+  dist_to_entry_pct: number;
+  zone: FreshnessZone;
+  fvg_unfilled: boolean;
+  outcome: string;
+  verdict: FreshnessVerdict;
+}
+
+export interface Evidence {
+  fvgs: EvidenceFVG[];
+  sweeps: EvidenceSweep[];
+  structure: EvidenceStructure[];
+  freshness: Freshness | null;
+}
+
 export interface ChartData {
   ticker: string;
   market: Market;
   interval: string;
   candles: Candle[];
   sr_levels: SRLevel[];
+  evidence?: Evidence;
+}
+
+// ── Tier specs (Fase 3 — /meta/tiers) ───────────────────────────────────────
+export interface TierMeta {
+  tier: string;
+  mandatory: string[];
+  optional: string[];
+  min_opt: number;
+  min_rr: number;
+}
+
+export interface TierSpecsResponse {
+  spec_hash: string;
+  tiers: TierMeta[];
 }
 
 export interface ScanResponse {

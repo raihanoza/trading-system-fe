@@ -350,7 +350,12 @@ export default function DetailContent({ market, ticker }: Props) {
         }
       >
         <div className="h-[500px]">
-          <TradingChart ticker={ticker} market={market} interval={interval} />
+          <TradingChart
+            ticker={ticker}
+            market={market}
+            interval={interval}
+            signalId={data.signal_id ?? undefined}
+          />
         </div>
       </Section>
 

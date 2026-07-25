@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import Link from "next/link";
 
-import { Signal, TIER_CONFIG, MARKET_CONFIG } from "@/types";
+import { Signal, Trade, TIER_CONFIG, MARKET_CONFIG, TierMeta } from "@/types";
 import { formatIDR, formatPrice, timeAgo } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { api, getTierSpecs } from "@/lib/api";
+import { computeTierLadder, tierSpec, type TierLadder } from "@/lib/tiers";
 import {
   TrendingUp,
   TrendingDown,
@@ -387,6 +390,121 @@ function GatesDetail({
   );
 }
 
+// ── Tier ladder + mandatory/optional split (B2) ───────────────────────────────
+
+function GateChip({ gate, on }: { gate: string; on: boolean }) {
+  return (
+    <span
+      title={getGateDescription(gate)}
+      className={cn(
+        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border",
+        on
+          ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/5"
+          : "text-muted-foreground border-border bg-secondary/40",
+      )}
+    >
+      {on ? (
+        <CheckCircle2 className="w-2.5 h-2.5" />
+      ) : (
+        <XCircle className="w-2.5 h-2.5 opacity-50" />
+      )}
+      {formatGateLabel(gate)}
+    </span>
+  );
+}
+
+function TierLadderPanel({
+  ladder,
+  spec,
+  knownTrue,
+  optionalRecorded,
+}: {
+  ladder: TierLadder | null;
+  spec: TierMeta;
+  knownTrue: string[];
+  optionalRecorded: boolean;
+}) {
+  const known = new Set(knownTrue);
+  const optHave = spec.optional.filter((g) => known.has(g)).length;
+
+  return (
+    <div className="rounded-lg border border-border bg-secondary/30 mb-3 overflow-hidden">
+      {/* Ladder — kenapa tier ini, bukan yang di atas */}
+      {ladder && (
+        <div
+          className={cn(
+            "px-3 py-2 text-[11px] border-b border-border/30",
+            ladder.nextTier === null
+              ? "text-emerald-400"
+              : ladder.nearly && optionalRecorded
+                ? "text-amber-300"
+                : "text-muted-foreground",
+          )}
+        >
+          {ladder.nextTier === null ? (
+            <span className="font-semibold">🎯 Tier tertinggi tercapai</span>
+          ) : !optionalRecorded ? (
+            <span>
+              <span className="font-semibold text-foreground">
+                {ladder.currentTier}
+              </span>{" "}
+              → {ladder.nextTier}: butuh gate tambahan{" "}
+              <span className="text-muted-foreground/60">
+                (detail optional tak tercatat untuk sinyal lama)
+              </span>
+            </span>
+          ) : (
+            <span>
+              <span className="font-semibold text-foreground">
+                {ladder.currentTier}
+              </span>{" "}
+              → <span className="font-semibold">{ladder.nextTier}</span>:{" "}
+              {ladder.nearly && <span className="font-semibold">nyaris — </span>}
+              kurang{" "}
+              {ladder.missingMandatory.length > 0 &&
+                ladder.missingMandatory.map(formatGateLabel).join(", ")}
+              {ladder.optionalShort > 0 &&
+                `${ladder.missingMandatory.length ? " · " : ""}${ladder.optionalShort} gate optional`}
+              {ladder.rrNeeded !== null && ` · R:R ≥ ${ladder.rrNeeded}`}
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Pisah wajib vs optional untuk tier tercapai */}
+      <div className="px-3 py-2 space-y-2">
+        <div>
+          <p className="text-[10px] uppercase tracking-wider font-semibold mb-1 text-muted-foreground">
+            Wajib
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {spec.mandatory.map((g) => (
+              <GateChip key={g} gate={g} on={known.has(g)} />
+            ))}
+          </div>
+        </div>
+        {spec.optional.length > 0 && (
+          <div>
+            <p className="text-[10px] uppercase tracking-wider font-semibold mb-1 text-muted-foreground">
+              Optional ({optHave}/{spec.min_opt})
+              {!optionalRecorded && (
+                <span className="ml-1 normal-case font-normal text-muted-foreground/60">
+                  · tak tercatat untuk sinyal lama
+                </span>
+              )}
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {spec.optional.map((g) => (
+                <GateChip key={g} gate={g} on={known.has(g)} />
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Signal Reason Component ───────────────────────────────────────────────────
 
 function SignalReason({ reason }: { reason: string }) {
@@ -407,12 +525,219 @@ function SignalReason({ reason }: { reason: string }) {
   );
 }
 
+// ── B3 — Checklist verifikasi 1-tap yang menggerbangi tombol record ───────────
+
+function ChecklistItem({
+  checked,
+  onToggle,
+  label,
+  extra,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  label: React.ReactNode;
+  extra?: React.ReactNode;
+}) {
+  return (
+    <div className="text-[11px]">
+      <div
+        onClick={onToggle}
+        className="flex items-start gap-2 cursor-pointer select-none"
+      >
+        <span
+          className={cn(
+            "w-3.5 h-3.5 rounded border shrink-0 mt-0.5 flex items-center justify-center",
+            checked
+              ? "bg-emerald-500/20 border-emerald-500/50"
+              : "border-border",
+          )}
+        >
+          {checked && <CheckCircle2 className="w-3 h-3 text-emerald-400" />}
+        </span>
+        <span className="text-foreground/90">{label}</span>
+      </div>
+      {extra && <div className="ml-6 mt-1">{extra}</div>}
+    </div>
+  );
+}
+
+function RecordChecklist({
+  signal,
+  onTrade,
+  newsPassed,
+}: {
+  signal: Signal;
+  onTrade: (s: Signal) => void;
+  newsPassed: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [chartChecked, setChartChecked] = useState(false);
+  const [corrChecked, setCorrChecked] = useState(false);
+  const [rrChecked, setRrChecked] = useState(false);
+  const [openTrades, setOpenTrades] = useState<Trade[] | null>(null);
+
+  // Fetch posisi terbuka lazy — hanya saat checklist dibuka.
+  useEffect(() => {
+    if (!open || openTrades !== null) return;
+    let alive = true;
+    api.trades
+      .list()
+      .then(
+        (all) =>
+          alive && setOpenTrades(all.filter((t) => t.outcome === "open")),
+      )
+      .catch(() => alive && setOpenTrades([]));
+    return () => {
+      alive = false;
+    };
+  }, [open, openTrades]);
+
+  const label =
+    signal.tier === "RADAR"
+      ? "Track Observation"
+      : signal.tier === "SCOUT"
+        ? "Record (Small Size)"
+        : "Record Trade";
+
+  const btnStyle =
+    signal.tier === "RADAR"
+      ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/25 hover:bg-yellow-500/20 hover:border-yellow-500/40"
+      : signal.tier === "SCOUT"
+        ? "bg-blue-500/10 text-blue-400 border-blue-500/25 hover:bg-blue-500/20 hover:border-blue-500/40"
+        : "bg-primary/15 text-primary border-primary/25 hover:bg-primary/25 hover:border-primary/40";
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className={cn(
+          "w-full py-2 rounded-lg text-sm font-medium border transition-all active:scale-[0.98]",
+          btnStyle,
+        )}
+      >
+        {label}
+      </button>
+    );
+  }
+
+  const allChecked = chartChecked && corrChecked && rrChecked;
+
+  return (
+    <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-2.5">
+      <p className="text-[11px] font-semibold text-foreground flex items-center gap-1.5">
+        <Shield className="w-3.5 h-3.5 text-primary" /> Verifikasi sebelum
+        eksekusi
+      </p>
+
+      {/* 1. Chart & overlay (manual, nyambung ke B1) */}
+      <ChecklistItem
+        checked={chartChecked}
+        onToggle={() => setChartChecked((v) => !v)}
+        label="Chart & overlay dicek — setup masih cocok"
+        extra={
+          <Link
+            href={`/market/${signal.market}/${signal.ticker}`}
+            className="text-primary hover:underline"
+          >
+            buka chart →
+          </Link>
+        }
+      />
+
+      {/* 2. News (otomatis) */}
+      <div className="flex items-start gap-2 text-[11px]">
+        {newsPassed ? (
+          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+        ) : (
+          <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+        )}
+        <span className={newsPassed ? "text-muted-foreground" : "text-red-400"}>
+          News clear (otomatis)
+          {newsPassed ? "" : " — ADA news high-impact!"}
+        </span>
+      </div>
+
+      {/* 3. Korelasi — tampilkan posisi terbuka untuk dinilai manual */}
+      <ChecklistItem
+        checked={corrChecked}
+        onToggle={() => setCorrChecked((v) => !v)}
+        label="Korelasi — tidak menumpuk aset/sektor sama"
+        extra={
+          <span className="text-[10px] text-muted-foreground">
+            {openTrades === null
+              ? "Memuat posisi terbuka…"
+              : openTrades.length === 0
+                ? "Tak ada posisi terbuka."
+                : `Posisi terbuka: ${openTrades.map((t) => t.ticker).join(", ")}`}
+          </span>
+        }
+      />
+
+      {/* 4. R:R & lot */}
+      <ChecklistItem
+        checked={rrChecked}
+        onToggle={() => setRrChecked((v) => !v)}
+        label={`R:R & lot masuk akal untuk modal Rp3jt (R:R 1:${signal.rr_ratio})`}
+      />
+
+      <div className="flex gap-2 pt-1">
+        <button
+          onClick={() => setOpen(false)}
+          className="flex-1 py-1.5 rounded-lg text-xs font-medium border border-border text-muted-foreground hover:bg-secondary transition-all"
+        >
+          Batal
+        </button>
+        <button
+          disabled={!allChecked}
+          onClick={() => onTrade(signal)}
+          className={cn(
+            "flex-1 py-1.5 rounded-lg text-xs font-semibold border transition-all",
+            allChecked
+              ? btnStyle
+              : "bg-secondary/50 text-muted-foreground/50 border-border cursor-not-allowed",
+          )}
+        >
+          Konfirmasi {label}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Main SignalCard ───────────────────────────────────────────────────────────
 
 export default function SignalCard({ signal, onTrade }: Props) {
   const tier = TIER_CONFIG[signal.tier];
   const market = MARKET_CONFIG[signal.market];
   const isLong = signal.direction === "LONG";
+
+  // B2 — tier specs (fetch sekali, dibagi via cache) untuk tier ladder.
+  const [tiers, setTiers] = useState<TierMeta[] | null>(null);
+  useEffect(() => {
+    let alive = true;
+    getTierSpecs()
+      .then((r) => alive && setTiers(r.tiers))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const optionalRecorded = Array.isArray(signal.optional_passed);
+  const knownTrue = [
+    ...(Array.isArray(signal.gates_passed) ? signal.gates_passed : []),
+    ...(optionalRecorded ? (signal.optional_passed as string[]) : []),
+  ];
+  const ladder = tiers
+    ? computeTierLadder(signal.tier, knownTrue, signal.rr_ratio, tiers)
+    : null;
+  const spec = tiers ? tierSpec(signal.tier, tiers) : undefined;
+
+  // News = absolute-mandatory, jadi selalu lolos untuk sinyal yang tampil;
+  // tandai merah hanya kalau eksplisit ada di gates_failed (defensif).
+  const newsPassed = !(
+    Array.isArray(signal.gates_failed) ? signal.gates_failed : []
+  ).includes("no_high_impact_news");
 
   // Tier-specific guidance for Record Trade
   const tierGuidance: Record<
@@ -573,16 +898,20 @@ export default function SignalCard({ signal, onTrade }: Props) {
       {/* ✨ NEW: Signal Reason */}
       <SignalReason reason={signal.reason ?? ""} />
 
-      {/* ✨ NEW: Detailed Gates */}
-      {(() => {
-        const passed = Array.isArray(signal.gates_passed)
-          ? signal.gates_passed
-          : [];
-        const failed = Array.isArray(signal.gates_failed)
-          ? signal.gates_failed
-          : [];
-        return <GatesDetail passed={passed} failed={failed} />;
-      })()}
+      {/* B2 — panel keputusan: tier ladder + wajib/optional split */}
+      {spec ? (
+        <TierLadderPanel
+          ladder={ladder}
+          spec={spec}
+          knownTrue={knownTrue}
+          optionalRecorded={optionalRecorded}
+        />
+      ) : (
+        <GatesDetail
+          passed={Array.isArray(signal.gates_passed) ? signal.gates_passed : []}
+          failed={Array.isArray(signal.gates_failed) ? signal.gates_failed : []}
+        />
+      )}
 
       {/* Sentiment flag */}
       {signal.sentiment && (
@@ -606,25 +935,13 @@ export default function SignalCard({ signal, onTrade }: Props) {
         </div>
       )}
 
-      {/* ✨ UPDATED: Record Trade button untuk SEMUA tier (termasuk RADAR) */}
+      {/* B3 — checklist verifikasi 1-tap menggerbangi record (semua tier) */}
       {onTrade && guidance.canRecord && (
-        <button
-          onClick={() => onTrade(signal)}
-          className={cn(
-            "w-full py-2 rounded-lg text-sm font-medium transition-all active:scale-[0.98]",
-            signal.tier === "RADAR"
-              ? "bg-yellow-500/10 text-yellow-400 border border-yellow-500/25 hover:bg-yellow-500/20 hover:border-yellow-500/40"
-              : signal.tier === "SCOUT"
-                ? "bg-blue-500/10 text-blue-400 border border-blue-500/25 hover:bg-blue-500/20 hover:border-blue-500/40"
-                : "bg-primary/15 text-primary border border-primary/25 hover:bg-primary/25 hover:border-primary/40",
-          )}
-        >
-          {signal.tier === "RADAR"
-            ? "Track Observation"
-            : signal.tier === "SCOUT"
-              ? "Record (Small Size)"
-              : "Record Trade"}
-        </button>
+        <RecordChecklist
+          signal={signal}
+          onTrade={onTrade}
+          newsPassed={newsPassed}
+        />
       )}
     </div>
   );

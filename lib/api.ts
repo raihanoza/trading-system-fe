@@ -5,6 +5,7 @@ import type {
   ChartData,
   ScanResponse,
   Watchlist,
+  TierSpecsResponse,
 } from "@/types";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -15,6 +16,10 @@ function normalizeSignal(s: Record<string, unknown>): Record<string, unknown> {
     ...s,
     gates_passed: Array.isArray(s.gates_passed) ? s.gates_passed : [],
     gates_failed: Array.isArray(s.gates_failed) ? s.gates_failed : [],
+    // undefined dipertahankan untuk sinyal lama (belum punya kolom gates_optional)
+    optional_passed: Array.isArray(s.optional_passed)
+      ? s.optional_passed
+      : undefined,
   };
 }
 
@@ -61,8 +66,17 @@ export const api = {
   },
 
   // ── Charts ───────────────────────────────────────────────────────────────
-  chart: (market: string, ticker: string, interval = "1d") =>
-    request<ChartData>(`/charts/${market}/${ticker}?interval=${interval}`),
+  // signalId opsional → respons menyertakan evidence.freshness untuk sinyal itu.
+  chart: (market: string, ticker: string, interval = "1d", signalId?: number) =>
+    request<ChartData>(
+      `/charts/${market}/${ticker}?interval=${interval}` +
+        (signalId != null ? `&signal_id=${signalId}` : ""),
+    ),
+
+  // ── Meta ─────────────────────────────────────────────────────────────────
+  meta: {
+    tiers: () => request<TierSpecsResponse>("/meta/tiers"),
+  },
 
   // ── Watchlist ────────────────────────────────────────────────────────────
   watchlist: () => request<Watchlist>("/watchlist"),
@@ -102,3 +116,10 @@ export const api = {
   debug: (market: string, ticker: string) =>
     request(`/debug/${market}/${ticker}`),
 };
+
+// Tier specs statis per-deploy → fetch sekali, dibagi ke semua SignalCard.
+let _tierSpecsPromise: Promise<TierSpecsResponse> | null = null;
+export function getTierSpecs(): Promise<TierSpecsResponse> {
+  if (!_tierSpecsPromise) _tierSpecsPromise = api.meta.tiers();
+  return _tierSpecsPromise;
+}
