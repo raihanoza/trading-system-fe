@@ -16,6 +16,7 @@ import {
   Brain,
   Rewind,
   Table,
+  ClipboardCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -27,6 +28,7 @@ const NAV = [
   { href: "/forex", icon: DollarSign, label: "Forex" },
   { href: "/trades", icon: BookOpen, label: "Trades" },
   { href: "/stats", icon: BarChart3, label: "Analytics" },
+  { href: "/report-card", icon: ClipboardCheck, label: "Report Card" },
   { href: "/journal", icon: Book, label: "Journal" },
   { href: "/sentiment", icon: Radio, label: "Sentiment" },
   { href: "/backtest", icon: Rewind, label: "Backtest" },

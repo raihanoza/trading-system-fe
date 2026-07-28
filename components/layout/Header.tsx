@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { RefreshCw, Wifi, WifiOff } from "lucide-react";
 import { api } from "@/lib/api";
 import { getWIBTime, cn } from "@/lib/utils";
+import HeartbeatChip from "./HeartbeatChip";
 
 const ROUTE_TITLES: Record<string, string> = {
   "/": "Overview",
@@ -13,6 +14,7 @@ const ROUTE_TITLES: Record<string, string> = {
   "/forex": "Forex",
   "/trades": "Trades",
   "/stats": "Analytics",
+  "/report-card": "Report Card",
   "/journal": "Trading Journal",
   "/market": "Market Overview",
   "/sentiment": "Sentiment Analysis",
@@ -65,6 +67,9 @@ export default function Header() {
         <span className="hidden sm:block font-mono text-xs text-muted-foreground tabular-nums">
           {time}
         </span>
+
+        {/* Watchdog — API "Connected" hanya berarti server hidup, bukan scanner. */}
+        <HeartbeatChip />
 
         {/* API Status */}
         <button

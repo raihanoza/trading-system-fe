@@ -26,6 +26,7 @@ export interface Signal {
   gates_passed: string[];
   gates_failed: string[];
   optional_passed?: string[]; // Fase 3 — optional gates yang lolos (undefined utk sinyal lama)
+  gates_all?: Record<string, boolean>; // Fase A — vektor gate PENUH, termasuk yang gagal & kandidat
   wyckoff: string | null;
   reason: string;
   created_at?: string;
@@ -170,6 +171,151 @@ export interface TierMeta {
 export interface TierSpecsResponse {
   spec_hash: string;
   tiers: TierMeta[];
+}
+
+// ── Watchdog / heartbeat (Fase A, 4.1) ───────────────────────────────────────
+// Sistem pernah diam dua bulan tanpa ada yang tahu: "tidak ada setup bagus" dan
+// "scanner mati" terlihat identik dari luar. Chip di header memisahkannya.
+
+export type HeartbeatStatus = "ok" | "stale" | "never";
+
+export interface HeartbeatMarket {
+  market: string;
+  status: HeartbeatStatus;
+  last_success_at: string | null;
+  hours_ago: number | null;
+  tickers: number;
+  signals: number;
+  last_error: { at: string; market: string; message: string } | null;
+}
+
+export interface Heartbeat {
+  now: string;
+  stale: boolean;
+  stale_threshold_hours: number;
+  markets: HeartbeatMarket[];
+  message: string;
+}
+
+// ── Report card kalibrasi (4.2) + pengukuran Fase C ──────────────────────────
+
+export interface SampleSummary {
+  total: number;
+  decided: number;
+  wins: number;
+  losses: number;
+  expired: number;
+  win_rate: number | null;
+  ci_low: number | null;
+  ci_high: number | null;
+  expectancy_r: number | null;
+  total_r: number;
+  enough_sample: boolean;
+}
+
+export type GateVerdict =
+  | "positif"
+  | "negatif"
+  | "tidak konklusif"
+  | "sampel kurang";
+
+export interface GateLiftRow {
+  gate: string;
+  n_on: number;
+  n_off: number;
+  win_rate_on: number | null;
+  win_rate_off: number | null;
+  ci_on: [number | null, number | null];
+  ci_off: [number | null, number | null];
+  expectancy_on: number | null;
+  expectancy_off: number | null;
+  lift_pp: number | null;
+  verdict: GateVerdict;
+}
+
+export interface ReliabilityBucket {
+  bucket: string;
+  confidence_mid: number;
+  n: number;
+  win_rate: number | null;
+  ci_low: number | null;
+  ci_high: number | null;
+  gap_pp: number | null;
+  enough_sample: boolean;
+}
+
+export interface TierHitRate extends SampleSummary {
+  tier: Tier;
+}
+
+export interface BacktestRunSummary {
+  id: number;
+  label: string;
+  mode: string;
+  market: string;
+  trades: number;
+  win_rate: number | null;
+  expectancy_r: number | null;
+  created_at: string;
+}
+
+export interface ReportCard {
+  market: string;
+  trust_statement: string;
+  overall: SampleSummary;
+  by_tier: TierHitRate[];
+  reliability: ReliabilityBucket[];
+  calibration_error_pp: number | null;
+  gate_lift: GateLiftRow[];
+  backtest_runs: BacktestRunSummary[];
+}
+
+export interface GateLiftResponse {
+  market: string;
+  sample: SampleSummary;
+  min_sample: number;
+  gates: GateLiftRow[];
+  caveat: string | null;
+}
+
+export interface ReliabilityResponse {
+  market: string;
+  sample: SampleSummary;
+  curve: ReliabilityBucket[];
+  calibration_error_pp: number | null;
+  note: string;
+}
+
+// ── Risiko portofolio (Fase E, 4.5) ──────────────────────────────────────────
+
+export interface PortfolioRisk {
+  capital_idr: number;
+  open_positions: number;
+  total_risk_idr: number;
+  total_risk_pct: number;
+  risk_budget_idr: number;
+  headroom_idr: number;
+  over_budget: boolean;
+  by_market: {
+    market: string;
+    positions: number;
+    risk_idr: number;
+    share_pct: number;
+    tickers: string[];
+  }[];
+  long_positions: number;
+  short_positions: number;
+  warnings: string[];
+  sector_note: string;
+  projection?: {
+    ticker: string;
+    added_risk_idr: number;
+    total_risk_after: number;
+    risk_pct_after: number;
+    fits_budget: boolean;
+    blockers: string[];
+    verdict: string;
+  };
 }
 
 export interface ScanResponse {

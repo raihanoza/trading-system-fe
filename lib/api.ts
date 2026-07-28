@@ -6,20 +6,39 @@ import type {
   ScanResponse,
   Watchlist,
   TierSpecsResponse,
+  Heartbeat,
+  ReportCard,
+  GateLiftResponse,
+  ReliabilityResponse,
+  PortfolioRisk,
 } from "@/types";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-/** Normalize signal from API — ensure gates are always arrays */
+/**
+ * Normalize signal from API — ensure gates are always arrays.
+ *
+ * Dua bentuk respons hidup berdampingan: endpoint scan memakai kunci hasil
+ * serialisasi (`gates_optional`), sedangkan `/signals` mengembalikan baris DB
+ * mentah yang kunci kolomnya juga `gates_optional`. FE memakai nama
+ * `optional_passed`, jadi pemetaan dilakukan di satu tempat ini.
+ */
 function normalizeSignal(s: Record<string, unknown>): Record<string, unknown> {
+  const optional = Array.isArray(s.optional_passed)
+    ? s.optional_passed
+    : Array.isArray(s.gates_optional)
+      ? s.gates_optional
+      : undefined;
+
   return {
     ...s,
     gates_passed: Array.isArray(s.gates_passed) ? s.gates_passed : [],
     gates_failed: Array.isArray(s.gates_failed) ? s.gates_failed : [],
     // undefined dipertahankan untuk sinyal lama (belum punya kolom gates_optional)
-    optional_passed: Array.isArray(s.optional_passed)
-      ? s.optional_passed
-      : undefined,
+    optional_passed: optional,
+    // Vektor gate penuh (Fase A) — {nama: bool}, bukan list.
+    gates_all:
+      s.gates_all && typeof s.gates_all === "object" ? s.gates_all : undefined,
   };
 }
 
@@ -46,11 +65,21 @@ export const api = {
   health: () => request<{ status: string; version: string }>("/health"),
   stats: () => request<Stats>("/stats"),
 
+  // Watchdog (Fase A) — "tidak ada sinyal" vs "scanner mati" harus bisa dibedakan.
+  heartbeat: () => request<Heartbeat>("/system/heartbeat"),
+
   // ── Signals ──────────────────────────────────────────────────────────────
   signals: {
-    all: (limit = 20) => request<Signal[]>(`/signals?limit=${limit}`),
+    // normalizeSignals dipakai di sini — tanpa itu `optional_passed` selalu
+    // undefined dan tangga tier di SignalCard diam-diam jatuh ke mode "sinyal lama".
+    all: (limit = 20) =>
+      request<unknown>(`/signals?limit=${limit}`).then(
+        (d) => normalizeSignals(d) as Signal[],
+      ),
     byMarket: (market: string, limit = 20) =>
-      request<Signal[]>(`/signals/${market}?limit=${limit}`),
+      request<unknown>(`/signals/${market}?limit=${limit}`).then(
+        (d) => normalizeSignals(d) as Signal[],
+      ),
   },
 
   // ── Scans ────────────────────────────────────────────────────────────────
@@ -110,7 +139,21 @@ export const api = {
     gateAccuracy: () => request("/analytics/gate-accuracy"),
     signalAccuracy: () => request("/analytics/signal-accuracy"),
     monthly: () => request("/analytics/monthly"),
+
+    // ── Pengukuran (Fase C) + report card kalibrasi (4.2) ─────────────────
+    reportCard: (market = "all") =>
+      request<ReportCard>(`/analytics/report-card?market=${market}`),
+    gateLift: (market = "all") =>
+      request<GateLiftResponse>(`/analytics/gate-lift?market=${market}`),
+    reliability: (market = "all") =>
+      request<ReliabilityResponse>(`/analytics/reliability?market=${market}`),
   },
+
+  // ── Portofolio (Fase E, 4.5) ─────────────────────────────────────────────
+  portfolioRisk: (signalId?: number) =>
+    request<PortfolioRisk>(
+      `/portfolio/risk${signalId != null ? `?signal_id=${signalId}` : ""}`,
+    ),
 
   // ── Debug ────────────────────────────────────────────────────────────────
   debug: (market: string, ticker: string) =>
