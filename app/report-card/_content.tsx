@@ -20,8 +20,18 @@ const VERDICT_STYLE: Record<GateVerdict, string> = {
   positif: "bg-emerald-400/10 text-emerald-400 border-emerald-400/20",
   negatif: "bg-destructive/10 text-destructive border-destructive/20",
   "tidak konklusif": "bg-secondary text-muted-foreground border-border",
+  // "sampel kurang" = data tambahan menolong. Empat di bawahnya = tidak.
+  // Warnanya sengaja berbeda supaya keduanya tidak terbaca sebagai hal sama.
   "sampel kurang": "bg-secondary/50 text-muted-foreground border-border",
+  "tak ada di vektor": "bg-violet-400/10 text-violet-400 border-violet-400/20",
+  "tak terukur (konstan)": "bg-violet-400/10 text-violet-400 border-violet-400/20",
+  "tak terukur (tersaring tier)":
+    "bg-violet-400/10 text-violet-400 border-violet-400/20",
+  "tak terukur (satu nilai)":
+    "bg-violet-400/10 text-violet-400 border-violet-400/20",
 };
+
+const VERDICT_FALLBACK = "bg-secondary/50 text-muted-foreground border-border";
 
 function pct(v: number | null | undefined, suffix = "%"): string {
   return v == null ? "—" : `${v}${suffix}`;
@@ -326,6 +336,7 @@ function TierSection({ rows }: { rows: TierHitRate[] }) {
 
 /** Lift per gate — menjawab "gate mana yang benar-benar sinyal". */
 function GateLiftSection({ rows }: { rows: GateLiftRow[] }) {
+  const blind = rows.filter((g) => !g.measurable);
   return (
     <Section
       title="Lift per gate"
@@ -376,9 +387,10 @@ function GateLiftSection({ rows }: { rows: GateLiftRow[] }) {
                 </td>
                 <td className="py-2">
                   <span
+                    title={g.remedy ?? undefined}
                     className={cn(
                       "px-1.5 py-0.5 rounded text-[10px] font-medium border",
-                      VERDICT_STYLE[g.verdict],
+                      VERDICT_STYLE[g.verdict] ?? VERDICT_FALLBACK,
                     )}
                   >
                     {g.verdict}
@@ -388,6 +400,20 @@ function GateLiftSection({ rows }: { rows: GateLiftRow[] }) {
             ))}
           </tbody>
         </table>
+      )}
+      {blind.length > 0 && (
+        // Dipisah dari "sampel kurang" dengan sengaja: untuk gate di bawah ini
+        // cabang OFF-nya tidak ada secara konstruksi, jadi menunggu lebih
+        // banyak sinyal tidak akan pernah memunculkan angkanya.
+        <p className="mt-3 text-xs text-muted-foreground">
+          <span className="text-violet-400">{blind.length} gate tak terukur</span> —
+          bukan karena sampel kurang: cabang OFF-nya tidak ada secara konstruksi,
+          jadi menambah data tidak menolong. Untuk gate yang wajib di tangga tier,
+          ukur dengan run khusus:{" "}
+          <code className="font-mono text-[11px]">
+            python -m core.backtest_harness --measure-gate &lt;nama&gt;
+          </code>
+        </p>
       )}
     </Section>
   );

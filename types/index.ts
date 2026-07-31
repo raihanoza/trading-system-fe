@@ -213,16 +213,29 @@ export interface SampleSummary {
   enough_sample: boolean;
 }
 
+/**
+ * Empat vonis terakhir sengaja dipisah dari "sampel kurang". Semuanya dulu
+ * dilaporkan sebagai "sampel kurang", padahal hanya "sampel kurang" yang
+ * tertolong oleh data tambahan — untuk sisanya cabang OFF-nya tidak ada
+ * secara konstruksi, jadi ditunggu berapa lama pun tidak akan muncul.
+ */
 export type GateVerdict =
   | "positif"
   | "negatif"
   | "tidak konklusif"
-  | "sampel kurang";
+  | "sampel kurang"
+  | "tak ada di vektor"
+  | "tak terukur (konstan)"
+  | "tak terukur (tersaring tier)"
+  | "tak terukur (satu nilai)";
 
 export interface GateLiftRow {
   gate: string;
   n_on: number;
   n_off: number;
+  /** Seluruh baris per cabang (termasuk expired) — 0 berarti cabangnya tak ada. */
+  rows_on: number;
+  rows_off: number;
   win_rate_on: number | null;
   win_rate_off: number | null;
   ci_on: [number | null, number | null];
@@ -231,6 +244,12 @@ export interface GateLiftRow {
   expectancy_off: number | null;
   lift_pp: number | null;
   verdict: GateVerdict;
+  /** Apakah gate bernilai True DAN False saat dihitung. null = tak diketahui. */
+  varies_at_source: boolean | null;
+  /** false = lift-nya tak akan muncul berapa pun data ditambah. */
+  measurable: boolean;
+  /** Tindak lanjut yang benar untuk vonis ini. */
+  remedy: string | null;
 }
 
 export interface ReliabilityBucket {
