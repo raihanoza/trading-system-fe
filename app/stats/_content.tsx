@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { formatIDR, cn } from "@/lib/utils";
+import WeeklyRecap from "@/components/stats/WeeklyRecap";
 
 interface Summary {
   total_trades: number;
@@ -244,6 +245,12 @@ export default function StatsContent() {
           <div className="w-4 h-4 rounded-full border-2 border-primary border-t-transparent animate-spin ml-2 self-center" />
         )}
       </div>
+
+      {/* Rekap mingguan (D7) — SENGAJA di atas pagar "belum ada trade".
+          Justru saat belum ada apa-apa, fokusnya paling berguna: "mesinnya
+          tidak berjalan" / "jurnal tidak dipakai". Menyembunyikannya bersama
+          statistik trade membuat dua masalah itu tak pernah terlihat. */}
+      <WeeklyRecap market={activeMarket} />
 
       {/* Error */}
       {error && (

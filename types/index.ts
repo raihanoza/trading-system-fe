@@ -50,6 +50,21 @@ export interface Signal {
     conflict_message: string;
     top_headlines?: { title: string; source: string; score: number }[];
   } | null;
+
+  // D5 — skenario invalidasi PROSPEKTIF. Dilampirkan `/signals` saat penyajian
+  // (tidak disimpan), jadi selalu memakai aturan lifecycle yang berlaku
+  // sekarang — bukan aturan saat sinyalnya dulu terbit.
+  invalidation?: {
+    syarat: {
+      kode: string;
+      kalimat: string;
+      kapan: "sebelum entry" | "setelah entry" | string;
+    }[];
+    entry_ttl: number;
+    max_bars: number;
+    satuan_bar: string;
+    ringkas: string;
+  } | null;
 }
 
 export interface Trade {
@@ -305,6 +320,93 @@ export interface ReliabilityResponse {
   note: string;
 }
 
+// ── Modul edukasi (kelas D, D2/D3) ───────────────────────────────────────────
+
+/** Konteks yang WAJIB menyertai setiap angka terukur (aturan §7.6). */
+export interface MeasurementContext {
+  market: string;
+  mode: string;
+  levels_model: string;
+  years: number;
+  interval: string;
+  tickers: number;
+  data_fingerprint: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  run_id: number;
+  run_label: string;
+}
+
+export interface GateMeasurement {
+  lift_pp: number | null;
+  verdict: string;
+  /** Terisi bila vonis tersimpan usang dan dikoreksi saat dibaca. */
+  verdict_correction: string | null;
+  measurable: boolean | null;
+  remedy: string | null;
+  n_on: number | null;
+  n_off: number | null;
+  win_rate_on: number | null;
+  win_rate_off: number | null;
+  ci_on: [number | null, number | null] | null;
+  ci_off: [number | null, number | null] | null;
+  context: MeasurementContext;
+}
+
+export interface GateCard {
+  gate: string;
+  content: {
+    judul: string;
+    definisi: string;
+    cara_dihitung: string;
+    cara_membaca_di_chart: string;
+    salah_kaprah: string;
+    catatan_sistem: string;
+  } | null;
+  structure: {
+    mandatory_in: string[];
+    optional_in: string[];
+    is_candidate: boolean;
+    is_absolute_veto: boolean;
+    always_mandatory: boolean;
+    scores_tier: boolean;
+    role_summary: string;
+  };
+  /** null = belum pernah diukur (BUKAN "diukur, hasilnya nol"). */
+  measured: GateMeasurement[] | null;
+  teaching_note: string;
+  redundancy?: {
+    with: string;
+    agreement: number | null;
+    phi: number | null;
+    verdict: string;
+    informative: boolean;
+    context: MeasurementContext;
+  }[];
+}
+
+export interface GateCardsResponse {
+  gates: GateCard[];
+  sources: {
+    run_id: number;
+    label: string;
+    market: string;
+    mode: string;
+    trades: number;
+    win_rate: number | null;
+    expectancy_r: number | null;
+    data_fingerprint: string | null;
+    levels_model: string;
+  }[];
+  excluded_runs: { run_id: number; label: string; reason: string }[];
+  gates_without_content: string[];
+  disclaimer: string;
+}
+
+export interface GlossaryResponse {
+  terms: { istilah: string; ringkas: string; isi: string }[];
+}
+
 // ── Risiko portofolio (Fase E, 4.5) ──────────────────────────────────────────
 
 export interface PortfolioRisk {
@@ -322,6 +424,17 @@ export interface PortfolioRisk {
     share_pct: number;
     tickers: string[];
   }[];
+  /** C1/C4 — eksposur per grup korelasi (sektor / crypto / mata uang forex). */
+  by_correlation_group: {
+    group: string;
+    label: string;
+    direction: string;
+    positions: number;
+    risk_idr: number;
+    tickers: string[];
+  }[];
+  group_budget_idr: number;
+  group_max_risk_pct: number;
   long_positions: number;
   short_positions: number;
   warnings: string[];
@@ -332,6 +445,14 @@ export interface PortfolioRisk {
     total_risk_after: number;
     risk_pct_after: number;
     fits_budget: boolean;
+    /** Grup korelasi yang beririsan dengan sinyal ini, searah. */
+    correlation_groups: {
+      group: string;
+      label: string;
+      existing_tickers: string[];
+      risk_idr_after: number;
+      over_group_budget: boolean;
+    }[];
     blockers: string[];
     verdict: string;
   };

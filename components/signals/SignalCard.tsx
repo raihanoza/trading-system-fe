@@ -3,7 +3,14 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 
-import { Signal, Trade, TIER_CONFIG, MARKET_CONFIG, TierMeta } from "@/types";
+import {
+  Signal,
+  Trade,
+  PortfolioRisk,
+  TIER_CONFIG,
+  MARKET_CONFIG,
+  TierMeta,
+} from "@/types";
 import { formatIDR, formatPrice, timeAgo } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { api, getTierSpecs } from "@/lib/api";
@@ -393,14 +400,17 @@ function GatesDetail({
 // ── Tier ladder + mandatory/optional split (B2) ───────────────────────────────
 
 function GateChip({ gate, on }: { gate: string; on: boolean }) {
+  // D2 — tiap nama gate menautkan ke kartunya di /belajar: definisi, cara
+  // dihitung, dan lift terukurnya lengkap dengan CI dan vonis.
   return (
-    <span
-      title={getGateDescription(gate)}
+    <Link
+      href={`/belajar#${gate}`}
+      title={`${getGateDescription(gate)} — klik untuk pelajari`}
       className={cn(
-        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border",
+        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] border transition-colors",
         on
-          ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/5"
-          : "text-muted-foreground border-border bg-secondary/40",
+          ? "text-emerald-400 border-emerald-500/25 bg-emerald-500/5 hover:bg-emerald-500/15"
+          : "text-muted-foreground border-border bg-secondary/40 hover:bg-secondary",
       )}
     >
       {on ? (
@@ -409,7 +419,91 @@ function GateChip({ gate, on }: { gate: string; on: boolean }) {
         <XCircle className="w-2.5 h-2.5 opacity-50" />
       )}
       {formatGateLabel(gate)}
-    </span>
+    </Link>
+  );
+}
+
+/**
+ * D1 — "Kenapa sinyal ini muncul?"
+ *
+ * Narasi terstruktur dari data yang SUDAH ada (`gates_all` + tier spec) —
+ * bukan lapisan LLM. Angkanya sudah presisi; menambah lapisan generatif hanya
+ * menambah permukaan halusinasi tanpa manfaat terukur.
+ */
+function WhyThisSignal({
+  signal,
+  spec,
+}: {
+  signal: Signal;
+  spec: TierMeta | null | undefined;
+}) {
+  if (!spec) return null;
+  const all = signal.gates_all ?? {};
+  const failed = Object.entries(all)
+    .filter(([, v]) => v === false)
+    .map(([k]) => k);
+  const extraOn = Object.entries(all)
+    .filter(([k, v]) => v === true && !spec.mandatory.includes(k))
+    .map(([k]) => k);
+
+  return (
+    <div className="rounded-lg border border-border bg-secondary/20 p-2.5 space-y-1.5">
+      <p className="text-[11px] font-semibold flex items-center gap-1.5">
+        <Info className="w-3 h-3 text-primary" />
+        Kenapa sinyal ini muncul?
+      </p>
+      <p className="text-[11px] text-muted-foreground leading-relaxed">
+        Tier <span className="text-foreground font-medium">{signal.tier}</span>{" "}
+        tercapai karena {spec.mandatory.length} gate wajibnya lolos
+        {spec.mandatory.length > 0 && (
+          <>
+            {" ("}
+            {spec.mandatory.map((g, i) => (
+              <span key={g}>
+                {i > 0 && ", "}
+                <Link
+                  href={`/belajar#${g}`}
+                  className="text-primary hover:underline"
+                >
+                  {formatGateLabel(g)}
+                </Link>
+              </span>
+            ))}
+            {")"}
+          </>
+        )}
+        , dan R:R {signal.rr_ratio} memenuhi minimum {spec.min_rr}.
+        {extraOn.length > 0 && (
+          <> {extraOn.length} gate lain ikut menyala.</>
+        )}
+        {failed.length > 0 && (
+          <>
+            {" "}
+            Yang tidak lolos:{" "}
+            {failed.slice(0, 4).map((g, i) => (
+              <span key={g}>
+                {i > 0 && ", "}
+                <Link
+                  href={`/belajar#${g}`}
+                  className="text-primary hover:underline"
+                >
+                  {formatGateLabel(g)}
+                </Link>
+              </span>
+            ))}
+            {failed.length > 4 && ` +${failed.length - 4} lagi`}.
+          </>
+        )}
+      </p>
+      <p className="text-[10px] text-amber-400/90">
+        Gate yang lolos bukan bukti setup ini akan menang — belum satu pun dari
+        12 gate terbukti menaikkan winrate.{" "}
+        <Link href="/belajar" className="underline hover:text-amber-300">
+          Pelajari angkanya
+        </Link>
+        .
+      </p>
+    </div>
   );
 }
 
@@ -525,6 +619,77 @@ function SignalReason({ reason }: { reason: string }) {
   );
 }
 
+/**
+ * D5 — "kapan sinyal ini batal?", dinyatakan di muka.
+ *
+ * Kenapa ini ada di kartu, bukan di halaman terpisah: syarat batal yang baru
+ * dibaca setelah posisi merugi bukan syarat batal, melainkan pembenaran. Yang
+ * ditampilkan datang dari `signal_lifecycle` — modul yang sama yang kelak
+ * memvonis sinyal ini, jadi apa yang dijanjikan di sini adalah apa yang akan
+ * dinilai.
+ */
+function InvalidationPanel({
+  invalidation,
+}: {
+  invalidation?: Signal["invalidation"];
+}) {
+  const [open, setOpen] = useState(false);
+  if (!invalidation?.syarat?.length) return null;
+
+  const sebelum = invalidation.syarat.filter((s) => s.kapan === "sebelum entry");
+  const sesudah = invalidation.syarat.filter((s) => s.kapan !== "sebelum entry");
+
+  return (
+    <div className="mb-3 rounded-lg border border-border overflow-hidden">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between gap-2 px-3 py-2 text-left hover:bg-secondary/50 transition-colors"
+      >
+        <span className="text-[11px] font-semibold">Kapan sinyal ini batal?</span>
+        <span className="text-[10px] text-muted-foreground">
+          {open ? "tutup" : "lihat"}
+        </span>
+      </button>
+
+      <p className="px-3 pb-2 text-[10px] leading-relaxed text-muted-foreground">
+        {invalidation.ringkas}
+      </p>
+
+      {open && (
+        <div className="px-3 pb-3 space-y-2 border-t border-border pt-2">
+          {[
+            { judul: "Sebelum entry", isi: sebelum },
+            { judul: "Setelah entry", isi: sesudah },
+          ].map(
+            (blok) =>
+              blok.isi.length > 0 && (
+                <div key={blok.judul}>
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground/70">
+                    {blok.judul}
+                  </p>
+                  <ul className="mt-1 space-y-1">
+                    {blok.isi.map((s) => (
+                      <li
+                        key={s.kode}
+                        className="text-[10px] leading-relaxed text-foreground/90 pl-3 border-l border-border"
+                      >
+                        {s.kalimat.replace(/\*\*/g, "")}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ),
+          )}
+          <p className="text-[10px] text-muted-foreground/60 pt-1">
+            Syarat ini dihitung dari aturan siklus hidup yang berlaku sekarang —
+            modul yang sama yang akan memvonis sinyal ini.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── B3 — Checklist verifikasi 1-tap yang menggerbangi tombol record ───────────
 
 function ChecklistItem({
@@ -575,8 +740,12 @@ function RecordChecklist({
   const [corrChecked, setCorrChecked] = useState(false);
   const [rrChecked, setRrChecked] = useState(false);
   const [openTrades, setOpenTrades] = useState<Trade[] | null>(null);
+  // C1 — proyeksi risiko portofolio untuk sinyal INI. `undefined` = belum
+  // dimuat, `null` = gagal dimuat (dan itu dibedakan: kalau tak bisa dicek,
+  // item korelasi kembali jadi centang manual, bukan diam-diam dianggap aman).
+  const [risk, setRisk] = useState<PortfolioRisk | null | undefined>(undefined);
 
-  // Fetch posisi terbuka lazy — hanya saat checklist dibuka.
+  // Fetch posisi terbuka + proyeksi risiko lazy — hanya saat checklist dibuka.
   useEffect(() => {
     if (!open || openTrades !== null) return;
     let alive = true;
@@ -587,10 +756,20 @@ function RecordChecklist({
           alive && setOpenTrades(all.filter((t) => t.outcome === "open")),
       )
       .catch(() => alive && setOpenTrades([]));
+    api
+      .portfolioRisk(signal.id)
+      .then((r) => alive && setRisk(r))
+      .catch(() => alive && setRisk(null));
     return () => {
       alive = false;
     };
-  }, [open, openTrades]);
+  }, [open, openTrades, signal.id]);
+
+  const corrBlockers = risk?.projection?.correlation_groups?.filter(
+    (g) => g.over_group_budget,
+  );
+  const corrBlocked = !!corrBlockers?.length;
+  const corrGroups = risk?.projection?.correlation_groups ?? [];
 
   const label =
     signal.tier === "RADAR"
@@ -620,7 +799,12 @@ function RecordChecklist({
     );
   }
 
-  const allChecked = chartChecked && corrChecked && rrChecked;
+  // Blocker korelasi mengunci tombol tanpa bisa dicentang manual — itu bedanya
+  // dengan tiga item lain. Kalau ceknya gagal (`risk === null`), item korelasi
+  // kembali jadi centang manual supaya kegagalan jaringan tidak memblokir
+  // pencatatan.
+  const allChecked =
+    chartChecked && rrChecked && (corrBlocked ? false : corrChecked);
 
   return (
     <div className="rounded-lg border border-border bg-secondary/30 p-3 space-y-2.5">
@@ -657,21 +841,48 @@ function RecordChecklist({
         </span>
       </div>
 
-      {/* 3. Korelasi — tampilkan posisi terbuka untuk dinilai manual */}
-      <ChecklistItem
-        checked={corrChecked}
-        onToggle={() => setCorrChecked((v) => !v)}
-        label="Korelasi — tidak menumpuk aset/sektor sama"
-        extra={
-          <span className="text-[10px] text-muted-foreground">
-            {openTrades === null
-              ? "Memuat posisi terbuka…"
-              : openTrades.length === 0
-                ? "Tak ada posisi terbuka."
-                : `Posisi terbuka: ${openTrades.map((t) => t.ticker).join(", ")}`}
+      {/* 3. Korelasi (C1) — otomatis dari grup korelasi, bukan lagi dinilai
+          manual. Kalau sinyal ini menumpuk searah pada grup yang sudah penuh,
+          tombol record TERKUNCI: lima taruhan berkorelasi adalah satu taruhan
+          besar, dan modal Rp3jt tidak punya ruang untuk itu. */}
+      {corrBlocked ? (
+        <div className="flex items-start gap-2 text-[11px]">
+          <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0 mt-0.5" />
+          <span className="text-red-400">
+            Korelasi — TERKUNCI (otomatis)
+            {corrBlockers!.map((g) => (
+              <span key={g.group} className="block text-[10px] mt-0.5">
+                {g.label}: sudah ada {g.existing_tickers.join(", ")} searah.
+                Menambah ini jadi Rp{Math.round(g.risk_idr_after).toLocaleString("id-ID")} —
+                lewat batas per grup.
+              </span>
+            ))}
           </span>
-        }
-      />
+        </div>
+      ) : (
+        <ChecklistItem
+          checked={corrChecked}
+          onToggle={() => setCorrChecked((v) => !v)}
+          label="Korelasi — tidak menumpuk aset/sektor sama"
+          extra={
+            <span className="text-[10px] text-muted-foreground">
+              {risk === undefined
+                ? "Memeriksa grup korelasi…"
+                : risk === null
+                  ? "Cek korelasi gagal — nilai sendiri dari posisi terbuka."
+                  : corrGroups.length > 0
+                    ? `Searah di ${corrGroups
+                        .map((g) => `${g.label} (${g.existing_tickers.join(", ")})`)
+                        .join("; ")} — masih di bawah batas.`
+                    : openTrades === null
+                      ? "Memuat posisi terbuka…"
+                      : openTrades.length === 0
+                        ? "Tak ada posisi terbuka."
+                        : `Tidak berkorelasi dengan ${openTrades.map((t) => t.ticker).join(", ")}.`}
+            </span>
+          }
+        />
+      )}
 
       {/* 4. R:R & lot */}
       <ChecklistItem
@@ -897,6 +1108,12 @@ export default function SignalCard({ signal, onTrade }: Props) {
 
       {/* ✨ NEW: Signal Reason */}
       <SignalReason reason={signal.reason ?? ""} />
+
+      {/* D1 — panel "kenapa sinyal ini muncul?" */}
+      <WhyThisSignal signal={signal} spec={spec} />
+
+      {/* D5 — kapan sinyal ini batal, dinyatakan SEBELUM apa pun terjadi */}
+      <InvalidationPanel invalidation={signal.invalidation} />
 
       {/* B2 — panel keputusan: tier ladder + wajib/optional split */}
       {spec ? (

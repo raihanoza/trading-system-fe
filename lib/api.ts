@@ -11,6 +11,9 @@ import type {
   GateLiftResponse,
   ReliabilityResponse,
   PortfolioRisk,
+  GateCard,
+  GateCardsResponse,
+  GlossaryResponse,
 } from "@/types";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -147,6 +150,14 @@ export const api = {
       request<GateLiftResponse>(`/analytics/gate-lift?market=${market}`),
     reliability: (market = "all") =>
       request<ReliabilityResponse>(`/analytics/reliability?market=${market}`),
+  },
+
+  // ── Edukasi (kelas D, D2/D3) ─────────────────────────────────────────────
+  education: {
+    gates: () => request<GateCardsResponse>("/education/gates"),
+    gate: (name: string) =>
+      request<GateCard>(`/education/gates/${encodeURIComponent(name)}`),
+    glossary: () => request<GlossaryResponse>("/education/glossary"),
   },
 
   // ── Portofolio (Fase E, 4.5) ─────────────────────────────────────────────

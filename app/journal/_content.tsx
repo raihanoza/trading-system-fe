@@ -170,6 +170,87 @@ function Section({
 
 // ── Journal Entry Card ────────────────────────────────────────────────────────
 
+/**
+ * D6 — rencana vs aktual untuk satu trade.
+ *
+ * Dimuat **lazy**, hanya saat kartunya dibuka: review butuh satu query sinyal
+ * per entri, dan memuatnya untuk seluruh daftar berarti puluhan request untuk
+ * data yang mungkin tak dilihat.
+ *
+ * Trade tanpa sinyal tertaut bukan error — ia ditampilkan apa adanya
+ * ("tidak ada rencana untuk dibandingkan"), karena itu fakta yang berguna.
+ */
+interface ReviewTemuan {
+  kode: string;
+  berat: string;
+  kalimat: string;
+}
+interface ReviewData {
+  punya_rencana: boolean;
+  temuan: ReviewTemuan[];
+  n_peringatan: number;
+  ringkas: string;
+}
+
+function PostTradeReview({ entryId }: { entryId: number }) {
+  const [data, setData] = useState<ReviewData | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let batal = false;
+    (async () => {
+      try {
+        const r = await fetch(`${API}/journal/${entryId}/review`);
+        if (!r.ok) throw new Error();
+        const json = (await r.json()) as ReviewData;
+        if (!batal) setData(json);
+      } catch {
+        if (!batal) setError(true);
+      }
+    })();
+    return () => {
+      batal = true;
+    };
+  }, [entryId]);
+
+  if (error) return null;
+  if (!data)
+    return <div className="h-16 rounded-lg border border-border shimmer" />;
+
+  return (
+    <div className="rounded-lg border border-border p-3 space-y-2">
+      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
+        Rencana vs aktual
+      </p>
+      <p
+        className={cn(
+          "text-xs",
+          data.n_peringatan > 0 ? "text-warning" : "text-foreground/80",
+        )}
+      >
+        {data.ringkas}
+      </p>
+      {data.temuan.length > 0 && (
+        <ul className="space-y-1">
+          {data.temuan.map((t) => (
+            <li
+              key={t.kode}
+              className={cn(
+                "text-[10px] leading-relaxed pl-3 border-l",
+                t.berat === "peringatan"
+                  ? "border-warning/50 text-warning/90"
+                  : "border-border text-muted-foreground",
+              )}
+            >
+              {t.kalimat}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function EntryCard({
   entry,
   onNoteUpdate,
@@ -396,6 +477,9 @@ function EntryCard({
               <p className="text-xs text-foreground">{entry.entry_reason}</p>
             </div>
           )}
+
+          {/* D6 — rencana vs aktual, dimuat hanya saat kartunya dibuka */}
+          <PostTradeReview entryId={entry.id} />
 
           {/* Post-trade note */}
           <div>
