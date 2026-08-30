@@ -4,8 +4,10 @@ import type {
   Stats,
   ChartData,
   ScanResponse,
+  OvernightScanResponse,
   Watchlist,
   TierSpecsResponse,
+  DirectionsMeta,
   Heartbeat,
   ReportCard,
   GateLiftResponse,
@@ -63,6 +65,28 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+/**
+ * Respons scan, dinormalisasi sama seperti `/signals`.
+ *
+ * Sampai 25 Agustus 2026 jalur scan memakai `request` polos. API mengirim
+ * `gates_optional`, SignalCard membaca `optional_passed` — jadi tangga tier
+ * diam-diam jatuh ke mode "sinyal lama" untuk SETIAP kartu hasil scan,
+ * padahal datanya ada. `shadow_signals` ikut dinormalisasi karena kartunya
+ * membaca field yang sama; kalau kuncinya absen (mis. forex di luar kill
+ * zone) ia dibiarkan absen, bukan dipaksa jadi array kosong — "tidak
+ * di-scan" dan "di-scan, nol kandidat" tidak boleh tampil sama.
+ */
+async function scanRequest(path: string): Promise<ScanResponse> {
+  const r = await request<Record<string, unknown>>(path, { method: "POST" });
+  return {
+    ...r,
+    signals: normalizeSignals(r.signals),
+    ...(r.shadow_signals !== undefined
+      ? { shadow_signals: normalizeSignals(r.shadow_signals) }
+      : {}),
+  } as unknown as ScanResponse;
+}
+
 // ── System ────────────────────────────────────────────────────────────────────
 export const api = {
   health: () => request<{ status: string; version: string }>("/health"),
@@ -87,14 +111,20 @@ export const api = {
 
   // ── Scans ────────────────────────────────────────────────────────────────
   scan: {
-    stockAll: () => request<ScanResponse>("/scan/stock", { method: "POST" }),
-    stockIdx: () =>
-      request<ScanResponse>("/scan/stock/idx", { method: "POST" }),
-    stockUs: () => request<ScanResponse>("/scan/stock/us", { method: "POST" }),
-    crypto: () => request<ScanResponse>("/scan/crypto", { method: "POST" }),
-    forex: () => request<ScanResponse>("/scan/forex", { method: "POST" }),
+    stockAll: () => scanRequest("/scan/stock"),
+    stockIdx: () => scanRequest("/scan/stock/idx"),
+    stockUs: () => scanRequest("/scan/stock/us"),
+    // Overnight flip — BELUM TERUKUR (protokol 3.7). Bentuk respons beda
+    // dari ScanResponse (kandidat+skor, bukan Signal dengan entry/SL/TP).
+    stockOvernight: (submarket: "all" | "idx" | "us" = "all") =>
+      request<OvernightScanResponse>(
+        `/scan/stock/overnight?submarket=${submarket}`,
+        { method: "POST" },
+      ),
+    crypto: () => scanRequest("/scan/crypto"),
+    forex: () => scanRequest("/scan/forex"),
     ticker: (market: string, ticker: string) =>
-      request<ScanResponse>(`/scan/${market}/${ticker}`, { method: "POST" }),
+      scanRequest(`/scan/${market}/${ticker}`),
   },
 
   // ── Charts ───────────────────────────────────────────────────────────────
@@ -108,6 +138,9 @@ export const api = {
   // ── Meta ─────────────────────────────────────────────────────────────────
   meta: {
     tiers: () => request<TierSpecsResponse>("/meta/tiers"),
+    // Dipakai tab LONG/SHORT: tanpa ini "SHORT dimatikan" dan "SHORT menyala
+    // tapi hari ini nihil kandidat" tampil sama saja di layar.
+    directions: () => request<DirectionsMeta>("/meta/directions"),
   },
 
   // ── Watchlist ────────────────────────────────────────────────────────────

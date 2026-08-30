@@ -18,6 +18,7 @@ import {
   Table,
   ClipboardCheck,
   GraduationCap,
+  Moon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,7 @@ const NAV = [
   { href: "/", icon: Activity, label: "Overview" },
   { href: "/market", icon: Table, label: "Market" },
   { href: "/stock", icon: TrendingUp, label: "Stock" },
+  { href: "/stock/overnight", icon: Moon, label: "Overnight" },
   { href: "/crypto", icon: Bitcoin, label: "Crypto" },
   { href: "/forex", icon: DollarSign, label: "Forex" },
   { href: "/trades", icon: BookOpen, label: "Trades" },

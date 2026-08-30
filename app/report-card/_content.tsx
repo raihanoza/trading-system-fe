@@ -171,7 +171,10 @@ export default function ReportCardContent() {
       />
       <TierSection rows={data.by_tier} />
       <GateLiftSection rows={data.gate_lift} />
-      <BacktestSection runs={data.backtest_runs} />
+      <BacktestSection
+        runs={data.backtest_runs}
+        ditolak={data.backtest_runs_ditolak ?? []}
+      />
     </div>
   );
 }
@@ -226,8 +229,12 @@ function ReliabilitySection({
     <Section
       title="Reliability — confidence vs kenyataan"
       hint={
-        "`confidence` sekarang hanyalah proporsi gate yang lolos, bukan probabilitas. " +
-        "Gap positif besar = sistem terlalu percaya diri." +
+        "Sejak 29 Agu 2026 `confidence` adalah perkiraan peluang menang yang " +
+        "dikalibrasi ke hasil terukur (ECE 15,11 → 1,9 pp). Karena belum ada " +
+        "kombinasi gate yang terbukti punya daya pisah, nilainya sama untuk " +
+        "semua sinyal di satu pasar. Baris LAMA di database masih memakai " +
+        "formula proporsi gate, jadi kurva yang mencampur keduanya " +
+        "membandingkan dua penggaris." +
         (errorPp != null ? ` Rata-rata meleset ${errorPp} pp.` : "")
       }
     >
@@ -275,6 +282,7 @@ function ReliabilitySection({
           </tbody>
         </table>
       )}
+
     </Section>
   );
 }
@@ -421,8 +429,10 @@ function GateLiftSection({ rows }: { rows: GateLiftRow[] }) {
 
 function BacktestSection({
   runs,
+  ditolak,
 }: {
   runs: ReportCard["backtest_runs"];
+  ditolak: NonNullable<ReportCard["backtest_runs_ditolak"]>;
 }) {
   return (
     <Section
@@ -476,6 +486,23 @@ function BacktestSection({
             ))}
           </tbody>
         </table>
+      )}
+
+      {ditolak.length > 0 && (
+        <div className="mt-4 pt-4 border-t border-border">
+          <p className="text-xs text-muted-foreground mb-2">
+            {ditolak.length} run tersimpan sengaja TIDAK dihitung. Dibawa serta,
+            bukan disembunyikan — run yang tidak layak dikutip juga tidak layak
+            hilang tanpa jejak.
+          </p>
+          <ul className="space-y-1">
+            {ditolak.map((r) => (
+              <li key={r.id} className="text-xs text-muted-foreground">
+                <span className="font-mono">{r.label}</span> — {r.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
     </Section>
   );

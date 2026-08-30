@@ -34,6 +34,25 @@ export function timeAgo(dateStr: string): string {
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+/**
+ * Batas "masih dianggap hidup" menurut sistem sendiri —
+ * `duplicate_signal_window_days` di `config/settings.py` backend. Di luar
+ * jendela itu C3 berhenti menganggap setup yang sama sebagai duplikat, yang
+ * artinya sinyal lamanya tidak lagi dianggap aktif.
+ */
+export const STALE_AFTER_DAYS = 7;
+
+/**
+ * True kalau sinyal sudah lewat jendela aktifnya.
+ *
+ * Ada di sini, bukan inline di komponen, karena dua alasan: satu tempat yang
+ * tahu angka 7, dan `Date.now()` di badan komponen melanggar aturan kemurnian
+ * React 19 (hasilnya juga bisa beda antara render server dan klien).
+ */
+export function isStale(dateStr: string, days = STALE_AFTER_DAYS): boolean {
+  return Date.now() - new Date(dateStr).getTime() > days * 86_400_000;
+}
+
 export function getWIBTime(): string {
   return (
     new Date().toLocaleTimeString("id-ID", {

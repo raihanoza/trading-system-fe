@@ -5,6 +5,26 @@ export type Tier = "SNIPER" | "PRECISION" | "STANDARD" | "SCOUT" | "RADAR";
 export type Action = "BUY" | "WATCH" | "SKIP";
 export type Direction = "LONG" | "SHORT";
 export type Outcome = "win" | "loss" | "breakeven" | "open";
+
+/**
+ * Siklus hidup sinyal (4.3, backend `core/signal_lifecycle.py`):
+ * waiting_entry -> active -> hit_tp | hit_sl | expired | invalidated.
+ *
+ * Sinyal yang MASIH hidup hanya dua yang pertama; sisanya sudah selesai dan
+ * tidak boleh ditawarkan sebagai setup yang bisa diambil.
+ */
+export type SignalStatus =
+  | "waiting_entry"
+  | "active"
+  | "hit_tp"
+  | "hit_sl"
+  | "expired"
+  | "invalidated";
+
+export const SIGNAL_HIDUP: readonly SignalStatus[] = [
+  "waiting_entry",
+  "active",
+] as const;
 export type Submarket = "IDX" | "US" | "Crypto" | "Forex";
 
 export interface Signal {
@@ -20,7 +40,16 @@ export interface Signal {
   stop_loss: number;
   take_profit: number;
   rr_ratio: number;
+  // Perkiraan peluang menang TERKALIBRASI (backend 29 Agu 2026). Karena belum
+  // ada kombinasi gate yang terbukti punya daya pisah, nilainya SAMA untuk
+  // semua sinyal di satu pasar — jangan dipakai mengurutkan atau membandingkan
+  // antar-sinyal. Lihat core/confidence.py di repo backend.
   confidence: number;
+  // Proporsi bukti OPSIONAL yang lolos di tier ini (0-100). Inilah yang
+  // bervariasi antar-sinyal, dan inilah yang ditampilkan sebagai badge.
+  // undefined/null = sinyal DIBUAT SEBELUM 29 Agu 2026; sengaja tidak
+  // di-backfill karena `confidence` lama bukan besaran yang sama.
+  evidence_pct?: number | null;
   risk_idr: number;
   position_idr: number;
   gates_passed: string[];
@@ -30,6 +59,17 @@ export interface Signal {
   wyckoff: string | null;
   reason: string;
   created_at?: string;
+  // Diisi `/signals` (baris DB), TIDAK diisi respons scan — sinyal yang baru
+  // terbit belum punya riwayat siklus hidup. `undefined` karena itu berarti
+  // "baru saja terbit", bukan "statusnya tidak diketahui".
+  status?: SignalStatus;
+  outcome?: "pending" | "win" | "loss" | "expired" | string;
+  // Apakah baris ini masih dijangkau pelacak siklus hidup (backend
+  // `LIFECYCLE_WINDOW_DAYS`). `false` = `status`-nya BEKU, bukan kabar terbaru:
+  // pelacak hanya mengambil sinyal dalam 30 hari terakhir, jadi yang lebih tua
+  // menetap di `active` selamanya. Dihitung server-side supaya jendelanya tidak
+  // perlu disalin ke UI.
+  lifecycle_tracked?: boolean;
   // Leverage fields (optional)
   leverage?: number;
   margin_required_idr?: number;
@@ -186,6 +226,13 @@ export interface TierMeta {
 export interface TierSpecsResponse {
   spec_hash: string;
   tiers: TierMeta[];
+  // Gate yang BENAR-BENAR menentukan tier, vs gate KANDIDAT (protokol 3.7)
+  // yang dihitung dan disimpan tapi tidak menentukan apa pun. Dipisahkan di
+  // backend supaya FE tidak menyalin daftarnya: begitu sebuah kandidat
+  // dipromosikan ke tangga, tampilan ikut berubah tanpa disentuh.
+  // `undefined` = backend lama yang belum menerbitkannya.
+  scored?: string[];
+  candidates?: string[];
 }
 
 // ── Watchdog / heartbeat (Fase A, 4.1) ───────────────────────────────────────
@@ -302,6 +349,9 @@ export interface ReportCard {
   calibration_error_pp: number | null;
   gate_lift: GateLiftRow[];
   backtest_runs: BacktestRunSummary[];
+  /** Run tersimpan yang sengaja TIDAK dihitung, beserta alasannya.
+   *  Opsional: backend lama tidak mengirimnya. */
+  backtest_runs_ditolak?: (BacktestRunSummary & { reason: string })[];
 }
 
 export interface GateLiftResponse {
@@ -458,19 +508,95 @@ export interface PortfolioRisk {
   };
 }
 
+/**
+ * Baris yang TIDAK diterbitkan tapi tetap harus TERLIHAT (E1, backend 24 Agu
+ * 2026). Tiga asal-usul, dibedakan lewat `classifyShadow()`:
+ *
+ *   • `[NO-LEVELS]` — gate terhitung penuh, tapi entry/SL/TP tak terbentuk
+ *     karena level S/R timpang. `stop_loss`/`take_profit` **0.0 dan bukan
+ *     harga** — jangan pernah ditampilkan sebagai level.
+ *   • `[SHADOW]`    — gugur di tangga tier.
+ *   • `[DUPLIKAT]`  — sinyal sungguhan, ditahan karena setup sama masih aktif.
+ *
+ * `id` null: tidak satu pun dari ketiganya punya baris di DB pada scan ini.
+ */
+export interface ShadowSignal extends Omit<Signal, "id"> {
+  id: number | null;
+  duplicate?: boolean;
+  // Diblokir karena ada sinyal/posisi HIDUP berlawanan arah di instrumen yang
+  // sama (risiko 5.1 jalur SHORT). Sebabnya BEDA dari duplikat dan beda dari
+  // gugur di tangga tier: setup ini justru LOLOS tangga tier, yang menolaknya
+  // adalah aturan portofolio. Tanpa flag ini kartunya tampil sebagai "gugur di
+  // tangga tier" — keliru, dan menyembunyikan satu-satunya alasan sebenarnya.
+  blocked_opposite?: boolean;
+}
+
+/** `/meta/directions` — arah mana yang BENAR-BENAR dipindai backend. */
+export interface DirectionsMeta {
+  // Sakelar konfigurasi `SHORT_ENABLED`. Mati sejak protokol jalur SHORT gagal
+  // kriteria §4.4 (28 Agu 2026).
+  short_enabled: boolean;
+  // Batas MEKANIS, bukan konfigurasi: IDX/US tidak bisa short walau sakelarnya
+  // dinyalakan.
+  short_allowed_markets: string[];
+}
+
 export interface ScanResponse {
   scanned: string;
   signals_found: number;
   signals: Signal[];
   message: string;
+  // E1 — kandidat yang tidak diterbitkan. Dipisah dari `signals` dengan
+  // sengaja: menggabungkannya akan membuat `signals_found` berhenti berarti
+  // "yang diterbitkan". Absen di respons yang gugur sebelum scan jalan
+  // (mis. forex di luar kill zone).
+  shadow_signals?: ShadowSignal[];
+  shadow_count?: number;
   // Forex specific
   kill_zone?: boolean;
   session?: string;
   wib_time?: string;
   next?: string;
+  // Kenapa engine BERHENTI sebelum menganalisis apa pun (pasar tutup akhir
+  // pekan / rollover / menjelang tutup pekan), atau null kalau tidak diblokir.
+  //
+  // BEDA dari `kill_zone`, dan bedanya penting: `kill_zone` cuma soal JAM
+  // (London 14–17, NY 20:30–23 WIB) dan tidak tahu apa-apa soal HARI. Sabtu
+  // 21:43 WIB memberi `kill_zone: true` sementara pasarnya tutup. Tanpa
+  // `blocked`, hasil kosong terbaca sebagai "nol setup lolos" — padahal nol
+  // pair pernah diambil.
+  blocked?: string | null;
+  // `false` = tidak satu pun pair sempat dianalisis.
+  analyzed?: boolean;
   // Stock specific
   idx_count?: number;
   us_count?: number;
+}
+
+// Overnight flip — strategi kedua modul stock, BELUM TERUKUR (protokol 3.7).
+// Bentuk beda dari Signal: bukan entry/SL/TP dengan target harga, tapi
+// kandidat terurut skor closing-strength. Lihat
+// docs/plans/2026-08-24-overnight-flip-stock-design.md di repo backend.
+export interface OvernightCandidate {
+  ticker: string;
+  submarket: "IDX" | "US";
+  score: number; // 0-3
+  clv: number; // 0-1, Close Location Value
+  above_vwap: boolean;
+  vwap: number;
+  late_volume_share: number; // 0-1
+  price: number;
+  duplicate: boolean; // true = kandidat sama masih aktif, tidak disimpan ulang
+  reason: string;
+}
+
+export interface OvernightScanResponse {
+  scanned: string;
+  measured: false; // selalu false — belum ada strategi yang lolos protokol 3.7
+  note: string;
+  candidates_found: number;
+  candidates: OvernightCandidate[];
+  message: string;
 }
 
 export interface Watchlist {

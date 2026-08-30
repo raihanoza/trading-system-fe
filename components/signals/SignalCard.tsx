@@ -11,10 +11,17 @@ import {
   MARKET_CONFIG,
   TierMeta,
 } from "@/types";
-import { formatIDR, formatPrice, timeAgo } from "@/lib/utils";
+import {
+  formatIDR,
+  formatPrice,
+  isStale,
+  timeAgo,
+  STALE_AFTER_DAYS,
+} from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { api, getTierSpecs } from "@/lib/api";
 import { computeTierLadder, tierSpec, type TierLadder } from "@/lib/tiers";
+import { formatGateLabel, getGateDescription } from "@/lib/gates";
 import {
   TrendingUp,
   TrendingDown,
@@ -27,72 +34,13 @@ import {
   ChevronDown,
   ChevronUp,
   Info,
+  Clock,
 } from "lucide-react";
 
 interface Props {
   signal: Signal;
   onTrade?: (signal: Signal) => void;
 }
-
-// ── Gate label mapping ────────────────────────────────────────────────────────
-
-const GATE_LABELS: Record<string, { label: string; description: string }> = {
-  htf_trend_aligned: {
-    label: "HTF Trend",
-    description: "Trend di higher timeframe sejalan dengan signal",
-  },
-  bos_or_choch: {
-    label: "BOS/CHoCH",
-    description: "Ada Break of Structure atau Change of Character",
-  },
-  price_in_poi: {
-    label: "Price in POI",
-    description: "Harga sudah masuk Point of Interest (S/R zone)",
-  },
-  volume_spike: {
-    label: "Volume Spike",
-    description: "Volume signifikan di atas rata-rata",
-  },
-  volume_absorption: {
-    label: "Volume Absorb",
-    description: "Tekanan jual/beli diserap",
-  },
-  liquidity_sweep_done: {
-    label: "Liquidity Sweep",
-    description: "Stop loss retail sudah ter-sweep",
-  },
-  fvg_present: {
-    label: "FVG Present",
-    description: "Fair Value Gap teridentifikasi",
-  },
-  htf_candle_close: {
-    label: "HTF Close",
-    description: "Konfirmasi penutupan candle di HTF",
-  },
-  triple_confluence: {
-    label: "Triple Confluence",
-    description: "3+ faktor saling mendukung",
-  },
-  no_high_impact_news: {
-    label: "No News Risk",
-    description: "Tidak ada news high-impact dalam danger zone",
-  },
-  kill_zone: {
-    label: "Kill Zone",
-    description: "Sesi London/NY aktif (untuk forex)",
-  },
-  pdh_pdl_taken: {
-    label: "PDH/PDL Taken",
-    description: "Previous Day High/Low sudah disentuh",
-  },
-};
-
-const formatGateLabel = (g: string): string =>
-  GATE_LABELS[g]?.label ??
-  g.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-
-const getGateDescription = (g: string): string =>
-  GATE_LABELS[g]?.description ?? "Gate teknikal";
 
 // ── Sentiment Flag (unchanged) ────────────────────────────────────────────────
 
@@ -580,7 +528,20 @@ function TierLadderPanel({
         {spec.optional.length > 0 && (
           <div>
             <p className="text-[10px] uppercase tracking-wider font-semibold mb-1 text-muted-foreground">
-              Optional ({optHave}/{spec.min_opt})
+              {/* Penyebutnya BERAPA YANG ADA, bukan berapa yang diwajibkan.
+                  Sebelum 30 Agu 2026 tertulis `{optHave}/{spec.min_opt}`, dan
+                  itu salah dua arah sekaligus:
+                    • RADAR (min_opt=0) tampil "Optional (0/0)" tepat di atas
+                      DUA chip gate — kartunya membantah dirinya sendiri, dan
+                      terbaca "tidak ada gate optional" padahal ada dua yang
+                      gagal;
+                    • kalau yang lolos melebihi minimumnya (mis. STANDARD punya
+                      4 optional, min_opt=2, tiga lolos) ia mencetak
+                      "Optional (3/2)" — pecahan yang lebih besar dari satu.
+                  Minimumnya tetap disebut, terpisah, karena itu memang
+                  besaran yang berbeda. */}
+              Optional ({optHave}/{spec.optional.length} lolos · minimal{" "}
+              {spec.min_opt})
               {!optionalRecorded && (
                 <span className="ml-1 normal-case font-normal text-muted-foreground/60">
                   · tak tercatat untuk sinyal lama
@@ -922,6 +883,13 @@ export default function SignalCard({ signal, onTrade }: Props) {
   const market = MARKET_CONFIG[signal.market];
   const isLong = signal.direction === "LONG";
 
+  // Umur sinyal. `GET /signals` mengembalikan N baris terakhir TANPA batas
+  // umur, jadi sinyal Mei bisa duduk bersebelahan dengan sinyal hari ini dan
+  // — sampai 26 Agustus 2026 — tampil persis sama. Kartu yang tidak
+  // menyebutkan umurnya membuat "scan barusan menemukan ini" dan "ini sisa
+  // tiga bulan lalu" tidak bisa dibedakan.
+  const stale = signal.created_at ? isStale(signal.created_at) : false;
+
   // B2 — tier specs (fetch sekali, dibagi via cache) untuk tier ladder.
   const [tiers, setTiers] = useState<TierMeta[] | null>(null);
   useEffect(() => {
@@ -1001,24 +969,68 @@ export default function SignalCard({ signal, onTrade }: Props) {
           </span>
         </div>
 
-        <div className="flex items-center gap-1.5">
-          <div className="w-16 h-1.5 rounded-full bg-secondary overflow-hidden">
-            <div
-              className={cn(
-                "h-full rounded-full transition-all",
-                signal.confidence >= 80
-                  ? "bg-emerald-400"
-                  : signal.confidence >= 60
-                    ? "bg-blue-400"
-                    : "bg-yellow-400",
-              )}
-              style={{ width: `${signal.confidence}%` }}
-            />
+        {/* Badge = `evidence_pct`, BUKAN `confidence`.
+            Sejak 29 Agu 2026 backend memisahkan dua besaran yang dulu ditumpuk
+            di satu angka: `confidence` kini perkiraan peluang menang
+            terkalibrasi, dan karena belum ada kombinasi gate yang terbukti
+            punya daya pisah, nilainya SAMA untuk semua sinyal di satu pasar —
+            memakainya di sini berarti menampilkan angka yang identik di setiap
+            kartu. `evidence_pct` (berapa banyak bukti opsional yang lolos)
+            adalah satu-satunya yang bervariasi. */}
+        {typeof signal.evidence_pct === "number" ? (
+          <div
+            className="flex items-center gap-1.5"
+            title={
+              `Bukti opsional yang lolos di tier ${signal.tier}: ` +
+              `${signal.evidence_pct}%. Ini BUKAN peluang menang — belum ada ` +
+              `kombinasi gate yang terbukti memprediksi kemenangan. ` +
+              `Penyebutnya berbeda per tier, jadi angka ini tidak sebanding ` +
+              `antar-kartu dengan tier berbeda.`
+            }
+          >
+            {/* Warna lampu-lalu-lintas DICABUT 30 Agu 2026, bukan disetel ulang.
+                Hijau/biru/kuning menyatakan "makin banyak bukti makin baik" —
+                justru hubungan yang DIBANTAH pengukuran. Harness crypto,
+                8.950 trade:
+
+                  RADAR    0/2  n=4920  36,8 %   <- bukti lebih SEDIKIT,
+                  RADAR    1/2  n=1496  35,0 %      winrate lebih TINGGI
+                  SCOUT    1/3  n=1856  37,7 %
+                  SCOUT    2/3  n= 647  40,0 %
+                  STANDARD 2/4  n=  25  32,0 %
+
+                Tidak monoton, CI bertumpang tindih di mana-mana.
+
+                Alasan kedua, berdiri sendiri: PENYEBUTNYA berbeda per tier dan
+                per pasar (di crypto SNIPER cuma punya 1 gate optional karena
+                `kill_zone` tidak dikirim, STANDARD punya 4). "100 %" karena
+                itu tidak berarti sama di dua kartu, sehingga ambang warna
+                lintas tier membandingkan yang tidak sebanding — cacat yang
+                sama yang membuat `confidence` tidak jujur.
+
+                Barnya tetap ada: proporsi itu sendiri informatif. Yang dicabut
+                cuma penilaian bagus/buruknya. */}
+            <div className="w-16 h-1.5 rounded-full bg-secondary overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all bg-muted-foreground/60"
+                style={{ width: `${signal.evidence_pct}%` }}
+              />
+            </div>
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              {signal.evidence_pct}% bukti
+            </span>
           </div>
-          <span className="text-xs text-muted-foreground">
-            {signal.confidence}%
+        ) : (
+          /* Sinyal pra-29-Agu-2026. `confidence` lamanya BUKAN besaran yang
+             sama (ia memuat blok mandatory di pembilang dan penyebut), jadi
+             menampilkannya di slot ini akan membandingkan dua penggaris. */
+          <span
+            className="text-xs text-muted-foreground/60 font-mono"
+            title="Sinyal dibuat sebelum 29 Agu 2026 — bukti opsional belum dicatat terpisah."
+          >
+            bukti n/a
           </span>
-        </div>
+        )}
       </div>
 
       {/* Ticker + Direction */}
@@ -1040,6 +1052,23 @@ export default function SignalCard({ signal, onTrade }: Props) {
             )}
             {signal.direction}
           </div>
+          {signal.created_at && (
+            <div
+              className={cn(
+                "flex items-center gap-1 text-[11px] mt-1",
+                stale ? "text-amber-500" : "text-muted-foreground",
+              )}
+              title={new Date(signal.created_at).toLocaleString("id-ID")}
+            >
+              <Clock className="w-3 h-3 shrink-0" />
+              {timeAgo(signal.created_at)}
+              {stale && (
+                <span className="font-medium">
+                  · lewat jendela {STALE_AFTER_DAYS} hari
+                </span>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="text-right">
