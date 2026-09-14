@@ -19,6 +19,7 @@ import {
   ClipboardCheck,
   GraduationCap,
   Moon,
+  ScrollText,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -32,6 +33,7 @@ const NAV = [
   { href: "/trades", icon: BookOpen, label: "Trades" },
   { href: "/stats", icon: BarChart3, label: "Analytics" },
   { href: "/report-card", icon: ClipboardCheck, label: "Report Card" },
+  { href: "/log", icon: ScrollText, label: "Log Pencatatan" },
   { href: "/belajar", icon: GraduationCap, label: "Belajar" },
   { href: "/journal", icon: Book, label: "Journal" },
   { href: "/sentiment", icon: Radio, label: "Sentiment" },

@@ -1,5 +1,6 @@
 import { Metadata } from "next";
 import ReportCardContent from "./_content";
+import DailyReportCard from "./_daily";
 
 export const metadata: Metadata = {
   title: "Report Card | Trading System",
@@ -18,6 +19,13 @@ export default function ReportCardPage() {
           sinyal&rdquo; bukan klaim yang sama dengan &ldquo;60% dari 400&rdquo;.
         </p>
       </div>
+
+      {/* Kartu HARIAN lebih dulu — ia yang dibaca tiap pagi, dan sebelum
+          2 Sep 2026 satu-satunya cara melihatnya adalah menunggu WhatsApp
+          pukul 07:00. Analitik kalibrasi di bawahnya menjawab pertanyaan yang
+          sama tapi dari sisi lain: bukan "apa yang terjadi kemarin",
+          melainkan "apakah angkanya bisa dipercaya". */}
+      <DailyReportCard />
 
       <ReportCardContent />
     </div>

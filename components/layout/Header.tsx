@@ -15,6 +15,7 @@ const ROUTE_TITLES: Record<string, string> = {
   "/trades": "Trades",
   "/stats": "Analytics",
   "/report-card": "Report Card",
+  "/log": "Log Pencatatan",
   "/belajar": "Belajar",
   "/journal": "Trading Journal",
   "/market": "Market Overview",

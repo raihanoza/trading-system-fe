@@ -16,6 +16,8 @@ import type {
   GateCard,
   GateCardsResponse,
   GlossaryResponse,
+  DailyReportCard,
+  SignalLogResponse,
 } from "@/types";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
@@ -95,6 +97,15 @@ export const api = {
   // Watchdog (Fase A) — "tidak ada sinyal" vs "scanner mati" harus bisa dibedakan.
   heartbeat: () => request<Heartbeat>("/system/heartbeat"),
 
+  // Report card HARIAN — teks yang sama persis dengan yang dikirim job 07:00
+  // ke WhatsApp. Dulu hanya bisa dilihat dengan menunggu jam itu; sejak
+  // 2 Sep 2026 `core/report_card.py` melayani ketiga pintu dari satu fungsi.
+  //
+  // Sengaja TIDAK di-parse jadi objek: begitu FE mengurai lalu merangkainya
+  // ulang, ia berhenti jadi laporan yang sama dan mulai jadi laporan kedua
+  // yang bisa bergeser diam-diam dari yang dikirim ke WhatsApp.
+  dailyReportCard: () => request<DailyReportCard>("/report-card"),
+
   // ── Signals ──────────────────────────────────────────────────────────────
   signals: {
     // normalizeSignals dipakai di sini — tanpa itu `optional_passed` selalu
@@ -107,6 +118,17 @@ export const api = {
       request<unknown>(`/signals/${market}?limit=${limit}`).then(
         (d) => normalizeSignals(d) as Signal[],
       ),
+
+    // Log pencatatan otomatis — TIDAK lewat normalizeSignals: bentuknya bukan
+    // Signal, melainkan jejak per-tahap (siapa menulis apa, kapan).
+    log: (limit = 50, market?: string, includeShadow = true) => {
+      const q = new URLSearchParams({
+        limit: String(limit),
+        include_shadow: String(includeShadow),
+      });
+      if (market) q.set("market", market);
+      return request<SignalLogResponse>(`/signals/log?${q}`);
+    },
   },
 
   // ── Scans ────────────────────────────────────────────────────────────────
@@ -154,15 +176,24 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ signal_id, units, notes }),
       }),
+    // `pnl_idr` OPSIONAL sejak 31 Agustus 2026 — server yang menghitungnya
+    // dari `exit_price` (biaya + arah + KURS). Dulu wajib, dan diisi dari
+    // `(exit − entry) × units` yang diketik pengguna: angka USD untuk
+    // crypto/US yang disimpan ke kolom bernama `pnl_idr`, lalu dibandingkan
+    // dengan ambang daily-stop bersatuan rupiah.
     close: (
       trade_id: number,
       exit_price: number,
-      pnl_idr: number,
       notes = "",
     ) =>
-      request(`/trades/${trade_id}/close`, {
+      request<{
+        trade_id: number;
+        outcome: string;
+        pnl_idr: number;
+        exit_price: number;
+      }>(`/trades/${trade_id}/close`, {
         method: "PUT",
-        body: JSON.stringify({ exit_price, pnl_idr, notes }),
+        body: JSON.stringify({ exit_price, notes }),
       }),
   },
 

@@ -16,36 +16,36 @@ interface Props {
 
 export default function CloseTradeDialog({ trade, onClose, onDone }: Props) {
   const [exitPrice, setExitPrice] = useState("");
-  const [pnl, setPnl] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
   if (!trade) return null;
 
-  // Auto-calculate PnL hint
-  const calcPnl = () => {
+  // Perkiraan KASAR, sengaja dilabeli begitu: ini selisih harga x unit dalam
+  // mata uang instrumen, TANPA biaya dan TANPA konversi kurs. Angka yang
+  // disimpan dihitung server (`realized_pnl_idr`) dan bisa berbeda jauh — di
+  // crypto, selisihnya sebesar kurs USD→IDR.
+  const calcGross = () => {
     if (!exitPrice || isNaN(Number(exitPrice))) return null;
-    const diff = (Number(exitPrice) - trade.entry) * trade.units;
-    return diff;
+    return (Number(exitPrice) - trade.entry) * trade.units;
   };
 
-  const pnlHint = calcPnl();
+  const gross = calcGross();
+  const quoteCcy = trade.market.includes("stock_idx") ? "IDR" : "USD";
 
   const handleClose = async () => {
-    if (!exitPrice || !pnl) {
-      toast.error("Fill all fields");
+    if (!exitPrice) {
+      toast.error("Exit price wajib diisi");
       return;
     }
     setSaving(true);
     try {
-      await api.trades.close(trade.id, Number(exitPrice), Number(pnl), notes);
+      const res = await api.trades.close(trade.id, Number(exitPrice), notes);
       const outcome =
-        Number(pnl) > 0
-          ? "✅ Win"
-          : Number(pnl) < 0
-            ? "❌ Loss"
-            : "➖ Breakeven";
-      toast.success(`Trade closed — ${outcome}`);
+        res.pnl_idr > 0 ? "✅ Win" : res.pnl_idr < 0 ? "❌ Loss" : "➖ Breakeven";
+      toast.success(`Trade closed — ${outcome}`, {
+        description: `P&L Rp${res.pnl_idr.toLocaleString("id-ID")}`,
+      });
       onDone();
       onClose();
     } catch (e) {
@@ -85,24 +85,21 @@ export default function CloseTradeDialog({ trade, onClose, onDone }: Props) {
             onChange={(e) => setExitPrice(e.target.value)}
             autoFocus
           />
-          {pnlHint !== null && (
-            <p
-              className={`text-xs mt-1 ${pnlHint >= 0 ? "text-profit" : "text-loss"}`}
-            >
-              Estimated P&L: {pnlHint >= 0 ? "+" : ""}
-              {pnlHint.toFixed(2)}{" "}
-              {trade.market.includes("stock_idx") ? "IDR" : "USD"}
-            </p>
+          {gross !== null && (
+            <div className="mt-1 space-y-0.5">
+              <p
+                className={`text-xs ${gross >= 0 ? "text-profit" : "text-loss"}`}
+              >
+                Selisih kasar: {gross >= 0 ? "+" : ""}
+                {gross.toFixed(2)} {quoteCcy}
+              </p>
+              <p className="text-[10px] text-muted-foreground leading-snug">
+                Angka di atas BELUM dipotong biaya
+                {quoteCcy !== "IDR" && " dan belum dikonversi ke rupiah"}. P&L
+                yang disimpan dihitung server — biaya, arah, dan kurs sekaligus.
+              </p>
+            </div>
           )}
-        </DialogField>
-
-        <DialogField label="P&L in IDR (positive = profit)">
-          <DialogInput
-            type="number"
-            placeholder="e.g. 45000 or -30000"
-            value={pnl}
-            onChange={(e) => setPnl(e.target.value)}
-          />
         </DialogField>
 
         <DialogField label="Notes (optional)">

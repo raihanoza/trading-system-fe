@@ -655,3 +655,68 @@ export const MARKET_CONFIG = {
   crypto: { label: "Crypto", emoji: "🔷", color: "text-cyan-400" },
   forex: { label: "Forex", emoji: "💱", color: "text-violet-400" },
 };
+
+// ── Report card HARIAN (teks WhatsApp) ──────────────────────────────────────
+// Sengaja satu string, bukan objek terurai. `core/report_card.py` adalah satu-
+// satunya yang menyusunnya; FE menampilkan apa adanya supaya halaman ini dan
+// pesan WhatsApp tidak bisa berbeda isi.
+export interface DailyReportCard {
+  text: string;
+  days: number;
+  generated_at: string;
+}
+
+// ── Log pencatatan otomatis ─────────────────────────────────────────────────
+// Satu baris `signals` adalah hasil TIGA penulis pada tiga waktu berbeda:
+// scanner (level + gate saat terbit), outcome_resolver (hasil, berhari-hari
+// kemudian), signal_lifecycle (status, sampai jendelanya habis).
+export type SignalLogKelas = "terbit" | "shadow" | "diagnostik";
+
+export interface SignalLogTahap {
+  tahap: string;
+  waktu: string | null;
+  penulis: string;
+  dicatat: Record<string, unknown>;
+  penggaris?: {
+    levels_model: string | null;
+    band_model: string | null;
+    tier_spec_hash: string | null;
+  };
+  gates?: {
+    lolos: string[] | null;
+    gagal: string[] | null;
+    optional: string[] | null;
+    vektor: Record<string, boolean> | null;
+  };
+  menunggu?: boolean;
+  beku?: boolean;
+  catatan?: string | null;
+}
+
+export interface SignalLogRow {
+  id: number;
+  ticker: string | null;
+  market: string | null;
+  interval: string | null;
+  tier: string | null;
+  direction: string | null;
+  created_at: string | null;
+  kelas: SignalLogKelas;
+  kelas_arti: string;
+  penanda: string | null;
+  outcome: string | null;
+  r_multiple: number | null;
+  status: string | null;
+  status_beku: boolean;
+  umur_hari: number | null;
+  reason: string | null;
+  trail: SignalLogTahap[];
+}
+
+export interface SignalLogResponse {
+  total: number;
+  per_kelas: Partial<Record<SignalLogKelas, number>>;
+  beku: number;
+  belum_resolusi: number;
+  rows: SignalLogRow[];
+}
