@@ -13,6 +13,7 @@ import type {
   SampleSummary,
   TierHitRate,
 } from "@/types";
+import type { ContractInfo, ContractParam } from "@/types/contract";
 
 const MARKETS = ["all", "stock", "stock_idx", "stock_us", "crypto", "forex"];
 
@@ -59,7 +60,8 @@ function SampleBadge({ sample }: { sample: SampleSummary }) {
 
 export default function ReportCardContent() {
   const [market, setMarket] = useState("all");
-  const [data, setData] = useState<ReportCard | null>(null);
+  const [contract, setContract] = useState<ContractParam>("active");
+  const [data, setData] = useState<(ReportCard & { contract?: ContractInfo }) | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -67,7 +69,7 @@ export default function ReportCardContent() {
     let cancelled = false;
     // setState hanya di dalam callback promise — bukan sinkron di badan effect.
     api.analytics
-      .reportCard(market)
+      .reportCard(market, contract)
       .then((d) => {
         if (cancelled) return;
         setData(d);
@@ -83,7 +85,7 @@ export default function ReportCardContent() {
     return () => {
       cancelled = true;
     };
-  }, [market]);
+  }, [market, contract]);
 
   if (loading && !data)
     return <p className="text-sm text-muted-foreground">Memuat…</p>;
@@ -96,6 +98,7 @@ export default function ReportCardContent() {
   if (!data) return null;
 
   const { overall } = data;
+  const info = data.contract;
 
   return (
     <div className="flex flex-col gap-6">
@@ -120,6 +123,18 @@ export default function ReportCardContent() {
           </button>
         ))}
       </div>
+
+      {info && (
+        <ContractBanner
+          info={info}
+          current={contract}
+          onPick={(c) => {
+            if (c === contract) return;
+            setLoading(true);
+            setContract(c);
+          }}
+        />
+      )}
 
       {/* Pernyataan kepercayaan — bagian terpenting halaman ini */}
       <div className="rounded-lg border border-border bg-card p-4">
@@ -149,21 +164,7 @@ export default function ReportCardContent() {
         </div>
       </div>
 
-      {overall.decided === 0 && (
-        <div className="rounded-lg border border-yellow-400/20 bg-yellow-400/10 p-4 text-sm">
-          <p className="flex items-start gap-2 text-yellow-400">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>
-              Belum ada sinyal live yang teresolusi. Menunggu akumulasi sinyal
-              butuh berbulan-bulan — jalankan harness backtest untuk mendapat
-              angka hari ini:
-              <code className="ml-1 px-1.5 py-0.5 rounded bg-background/60 font-mono text-xs">
-                python -m core.backtest_harness --market stock_idx --mode both
-              </code>
-            </span>
-          </p>
-        </div>
-      )}
+      <EmptyNotice decided={overall.decided} info={info} />
 
       <ReliabilitySection
         curve={data.reliability}
@@ -175,6 +176,116 @@ export default function ReportCardContent() {
         runs={data.backtest_runs}
         ditolak={data.backtest_runs_ditolak ?? []}
       />
+    </div>
+  );
+}
+
+function contractLabel(hash: string): string {
+  return hash === "none" ? "tanpa hash (pra-28 Agu)" : hash;
+}
+
+/** Kotak "belum ada data" yang membedakan dua sebab kosong. */
+export function EmptyNotice({
+  decided,
+  info,
+}: {
+  decided: number;
+  info?: ContractInfo;
+}) {
+  if (decided > 0) return null;
+  // Kosong karena PILIHAN kontrak, bukan karena sistem belum pernah
+  // menghasilkan apa pun — dua keadaan yang tindak lanjutnya berbeda.
+  const karenaKontrak = info != null && info.excluded > 0;
+  return (
+    <div className="rounded-lg border border-yellow-400/20 bg-yellow-400/10 p-4 text-sm">
+      <p className="flex items-start gap-2 text-yellow-400">
+        <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+        {karenaKontrak ? (
+          <span>
+            Kontrak <span className="font-mono">{contractLabel(info.selected)}</span>{" "}
+            belum punya sinyal teresolusi. {info.excluded} baris dari kontrak
+            lain sengaja tidak dihitung: nama tier sama, populasi berbeda. Lihat
+            kontrak lain secara terpisah lewat pilihan di atas — jangan dipakai
+            untuk menilai kontrak ini.
+          </span>
+        ) : (
+          <span>
+            Belum ada sinyal live yang teresolusi. Menunggu akumulasi sinyal
+            butuh berbulan-bulan — jalankan harness backtest untuk mendapat
+            angka hari ini:
+            <code className="ml-1 px-1.5 py-0.5 rounded bg-background/60 font-mono text-xs">
+              python -m core.backtest_harness --market stock_idx --mode both
+            </code>
+          </span>
+        )}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Kontrak tier di balik setiap angka halaman ini. Backend memilih SATU
+ * kontrak secara bawaan (kode yang sedang berjalan) dan menghitung apa yang ia
+ * keluarkan; "gabung semua" tersedia, tetapi dengan peringatannya.
+ */
+export function ContractBanner({
+  info,
+  current,
+  onPick,
+}: {
+  info: ContractInfo;
+  current: ContractParam;
+  onPick: (c: ContractParam) => void;
+}) {
+  const lain = Object.keys(info.counts).filter((h) => h !== info.active);
+  const pilihan: { value: ContractParam; label: string }[] = [
+    { value: "active", label: `aktif · ${info.active}` },
+    ...lain.map((h) => ({ value: h, label: contractLabel(h) })),
+    { value: "all", label: "gabung semua" },
+  ];
+  const hitungan = Object.entries(info.counts);
+  return (
+    <div className="rounded-lg border border-border bg-card p-4 text-sm">
+      <p className="text-foreground">
+        Kontrak tier:{" "}
+        <span className="font-mono">
+          {info.selected === "all" ? "semua digabung" : contractLabel(info.selected)}
+        </span>
+        {info.selected === info.active && (
+          <span className="ml-1.5 text-xs text-muted-foreground">
+            (kode yang sedang berjalan)
+          </span>
+        )}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">
+        {hitungan.length === 0
+          ? "Belum ada baris berlabel di kontrak mana pun."
+          : "Baris per kontrak: " +
+            hitungan.map(([h, n]) => `${contractLabel(h)} ${n}`).join(" · ")}
+        {info.excluded > 0 && ` — ${info.excluded} tidak ikut angka di bawah.`}
+      </p>
+      {info.warning && (
+        <p className="mt-2 flex items-start gap-2 text-xs text-yellow-400">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <span>{info.warning}</span>
+        </p>
+      )}
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {pilihan.map((p) => (
+          <button
+            key={p.value}
+            onClick={() => onPick(p.value)}
+            className={cn(
+              "px-2.5 py-1 rounded-md text-xs font-mono border transition-all",
+              current === p.value
+                ? "bg-primary/10 text-primary border-primary/20"
+                : "border-border text-muted-foreground hover:bg-secondary",
+            )}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

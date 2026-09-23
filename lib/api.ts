@@ -19,6 +19,7 @@ import type {
   DailyReportCard,
   SignalLogResponse,
 } from "@/types";
+import type { ContractInfo, ContractParam } from "@/types/contract";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -208,8 +209,12 @@ export const api = {
     monthly: () => request("/analytics/monthly"),
 
     // ── Pengukuran (Fase C) + report card kalibrasi (4.2) ─────────────────
-    reportCard: (market = "all") =>
-      request<ReportCard>(`/analytics/report-card?market=${market}`),
+    // `contract` bawaan "active" = kontrak kode yang berjalan (backend
+    // core/cohort.py); hash lain atau "all" hanya atas pilihan eksplisit.
+    reportCard: (market = "all", contract: ContractParam = "active") =>
+      request<ReportCard & { contract?: ContractInfo }>(
+        `/analytics/report-card?market=${market}&contract=${encodeURIComponent(contract)}`,
+      ),
     gateLift: (market = "all") =>
       request<GateLiftResponse>(`/analytics/gate-lift?market=${market}`),
     reliability: (market = "all") =>
