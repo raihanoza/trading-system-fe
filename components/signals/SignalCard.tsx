@@ -732,12 +732,9 @@ function RecordChecklist({
   const corrBlocked = !!corrBlockers?.length;
   const corrGroups = risk?.projection?.correlation_groups ?? [];
 
-  const label =
-    signal.tier === "RADAR"
-      ? "Track Observation"
-      : signal.tier === "SCOUT"
-        ? "Record (Small Size)"
-        : "Record Trade";
+  // RADAR dibedakan karena aksinya WATCH. "Record (Small Size)" untuk SCOUT
+  // dicabut 26 Sep 2026 (S-1 b): sizing datar, tier tidak memprediksi hasil.
+  const label = signal.tier === "RADAR" ? "Track Observation" : "Record Trade";
 
   const btnStyle =
     signal.tier === "RADAR"
@@ -918,22 +915,18 @@ export default function SignalCard({ signal, onTrade }: Props) {
     Array.isArray(signal.gates_failed) ? signal.gates_failed : []
   ).includes("no_high_impact_news");
 
-  // Tier-specific guidance for Record Trade
+  // Tier-specific guidance for Record Trade. Hanya RADAR yang diberi
+  // peringatan, karena AKSINYA WATCH (bukan BUY). Peringatan "size lebih
+  // kecil" untuk STANDARD/SCOUT dicabut 26 Sep 2026 (S-1 b): audit backend
+  // menemukan tier tidak memprediksi hasil dan sizer backend datar 0,5 %.
   const tierGuidance: Record<
     string,
     { canRecord: boolean; warning?: string; noteSuggestion?: string }
   > = {
     SNIPER: { canRecord: true },
     PRECISION: { canRecord: true },
-    STANDARD: {
-      canRecord: true,
-      warning: "Setup standard — pertimbangkan size lebih kecil",
-    },
-    SCOUT: {
-      canRecord: true,
-      warning: "Setup awal — risk maksimal 1% modal",
-      noteSuggestion: "Scout: ukuran kecil untuk testing setup",
-    },
+    STANDARD: { canRecord: true },
+    SCOUT: { canRecord: true },
     RADAR: {
       canRecord: true,
       warning: "Hanya watchlist — record untuk tracking observasi",
@@ -961,6 +954,7 @@ export default function SignalCard({ signal, onTrade }: Props) {
               "px-2 py-0.5 rounded-md text-xs font-semibold border",
               tier.bgColor,
             )}
+            title="Label hitungan konfluensi — tier tidak memprediksi hasil (audit 25 Sep 2026)."
           >
             {tier.emoji} {tier.label}
           </span>

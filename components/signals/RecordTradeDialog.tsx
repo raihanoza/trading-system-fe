@@ -15,7 +15,18 @@ interface Props {
   onDone: () => void;
 }
 
-// Tier-specific guidance untuk Record Trade Dialog
+// Tier-specific guidance untuk Record Trade Dialog.
+//
+// Tier = LABEL hitungan konfluensi, bukan tingkat kualitas. Audit backend
+// 25 Sep 2026 (trading-system audit/reports/06_tier_audit.md): skor/tier tidak
+// memisahkan outcome di 7 pasar-jendela, dan sizer backend sudah DATAR 0,5 %
+// untuk semua tier. Pesan lama ("Setup terbaik — full risk", "size 75 %",
+// "size 50 %") menyarankan sizing berbasis tier yang terbukti tanpa dasar.
+// Keputusan pemilik 26 Sep 2026 (S-1 b): nama tier tetap + keterangan tetap.
+// RADAR dibedakan karena AKSINYA (WATCH, bukan BUY), bukan karena kualitasnya.
+const BUY_TIER_NOTE =
+  "Tier tidak memprediksi hasil — risiko sama untuk semua tier BUY.";
+
 const TIER_GUIDANCE: Record<
   string,
   {
@@ -27,39 +38,38 @@ const TIER_GUIDANCE: Record<
   }
 > = {
   SNIPER: {
-    warningLevel: null,
-    title: "Sniper Setup",
-    message: "Setup terbaik — bisa pakai full risk sesuai konfigurasi.",
+    warningLevel: "info",
+    title: "Sniper — label konfluensi 5/5",
+    message: BUY_TIER_NOTE,
     defaultNote: "",
     suggestedSizeMultiplier: 1.0,
   },
   PRECISION: {
     warningLevel: "info",
-    title: "Precision Setup",
-    message: "Setup tinggi — full risk OK, tapi pasang SL ketat.",
+    title: "Precision — label konfluensi 4/5",
+    message: BUY_TIER_NOTE,
     defaultNote: "",
     suggestedSizeMultiplier: 1.0,
   },
   STANDARD: {
     warningLevel: "info",
-    title: "Standard Setup",
-    message: "Setup standar — pertimbangkan size 75% dari normal.",
-    defaultNote: "Standard setup, size 75%",
-    suggestedSizeMultiplier: 0.75,
+    title: "Standard — label konfluensi 3/5",
+    message: BUY_TIER_NOTE,
+    defaultNote: "",
+    suggestedSizeMultiplier: 1.0,
   },
   SCOUT: {
-    warningLevel: "warning",
-    title: "Scout / Setup Awal",
-    message:
-      "Setup awal masih terbentuk. Gunakan size kecil (50% atau kurang) untuk testing.",
-    defaultNote: "Scout: 50% size untuk testing",
-    suggestedSizeMultiplier: 0.5,
+    warningLevel: "info",
+    title: "Scout — label konfluensi 2/5",
+    message: BUY_TIER_NOTE,
+    defaultNote: "",
+    suggestedSizeMultiplier: 1.0,
   },
   RADAR: {
     warningLevel: "danger",
-    title: "Radar — Observation Only",
+    title: "Radar — WATCH, bukan BUY",
     message:
-      "Setup belum lengkap. Recommended: paper trade atau ukuran minimal (10-25%) untuk learning, BUKAN untuk profit.",
+      "Sistem tidak menerbitkan BUY untuk tier ini. Catat untuk observasi / paper trade saja; tier tidak memprediksi hasil.",
     defaultNote: "Radar tracking — observation/paper trade",
     suggestedSizeMultiplier: 0.25,
   },
@@ -106,8 +116,9 @@ export default function RecordTradeDialog({ signal, onClose, onDone }: Props) {
     }
   };
 
+  // Hanya RADAR yang diperlakukan beda (aksinya WATCH). Cabang khusus SCOUT
+  // ("Record Small Trade") dicabut 26 Sep 2026 — lihat TIER_GUIDANCE.
   const isRadar = signal.tier === "RADAR";
-  const isScout = signal.tier === "SCOUT";
 
   return (
     <Dialog
@@ -244,9 +255,7 @@ export default function RecordTradeDialog({ signal, onClose, onDone }: Props) {
             placeholder={
               isRadar
                 ? "Alasan tracking, observasi apa yang ditunggu..."
-                : isScout
-                  ? "Setup yang sedang terbentuk, kondisi entry..."
-                  : "Konfirmasi yang dilihat, alasan entry..."
+                : "Konfirmasi yang dilihat, alasan entry..."
             }
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
@@ -281,9 +290,7 @@ export default function RecordTradeDialog({ signal, onClose, onDone }: Props) {
               ? "Saving..."
               : isRadar
                 ? "Track Observation"
-                : isScout
-                  ? "Record Small Trade"
-                  : "Record Trade"}
+                : "Record Trade"}
           </Button>
         </div>
       </div>
