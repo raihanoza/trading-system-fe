@@ -80,6 +80,13 @@ interface BacktestData {
   capital_curve: number[];
   trades: Trade[];
   error?: string;
+  // Kontrak & sumber gate (backend sejak 26 Sep 2026, audit Fase 09 I-1).
+  // "live" = gate & level dihitung fungsi engine live (paritas dengan sinyal
+  // terpasang); "proxy" = salinan backtester lama — BUKAN selector terpasang.
+  tier_policy?: string;
+  tier_spec_hash?: string;
+  gate_source?: string;
+  policy_notes?: string[];
 }
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -116,6 +123,19 @@ const INTERVAL_OPTIONS = [
   { value: "4h", label: "4 Hours" },
   { value: "1h", label: "1 Hour" },
 ];
+
+/**
+ * TF dasar yang dipakai engine LIVE per pasar (backend
+ * `engines/live_gates.BASE_INTERVAL`). Hanya di TF ini backtest memakai gate
+ * engine live; TF lain jatuh ke gate proksi yang aksinya berbeda dari live di
+ * 18–21 % bar crypto/forex (audit Fase 03). Karena itu TF live jadi bawaan.
+ */
+const LIVE_INTERVAL: Record<string, string> = {
+  crypto: "4h",
+  forex: "1h",
+  stock_us: "1d",
+  stock_idx: "1d",
+};
 
 const TIER_COLORS: Record<string, string> = {
   SNIPER: "text-emerald-400",
@@ -242,7 +262,7 @@ function EquityCurve({ curve }: { curve: number[] }) {
 export default function BacktestContent() {
   const [market, setMarket] = useState("crypto");
   const [ticker, setTicker] = useState("");
-  const [interval, setInterval] = useState("1d");
+  const [interval, setInterval] = useState(LIVE_INTERVAL.crypto);
   const [years, setYears] = useState(2);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestData | null>(null);
@@ -288,6 +308,7 @@ export default function BacktestContent() {
               key={m.value}
               onClick={() => {
                 setMarket(m.value);
+                setInterval(LIVE_INTERVAL[m.value] ?? "1d");
                 setResult(null);
               }}
               className={cn(
@@ -325,6 +346,9 @@ export default function BacktestContent() {
                 )}
               >
                 {iv.label}
+                {LIVE_INTERVAL[market] === iv.value && (
+                  <span className="ml-1 text-[9px] uppercase opacity-70">live</span>
+                )}
               </button>
             ))}
           </div>
@@ -363,8 +387,10 @@ export default function BacktestContent() {
         {/* Info */}
         <p className="text-[11px] text-muted-foreground">
           Menjalankan gate logic terhadap data historis. Walk-forward simulation
-          — tidak ada lookahead bias. Estimasi waktu: 10–30 detik. Hasil
-          di-cache 1 jam.
+          — tidak ada lookahead bias. Di TF bertanda <em>live</em>, gate &amp;
+          level dihitung fungsi engine live (sama dengan sinyal terpasang);
+          TF lain memakai gate proksi. Estimasi waktu: 10–30 detik, forex 3
+          tahun bisa ±90 detik. Hasil di-cache 1 jam.
         </p>
       </div>
 
@@ -420,6 +446,42 @@ export default function BacktestContent() {
               {result.win_rate}% win rate
             </span>
           </div>
+
+          {/* Sumber gate — tanpa ini hasil proksi tampil identik dengan hasil
+              selector terpasang (audit Fase 03/09, 26 Sep 2026). */}
+          {result.gate_source && (
+            <div
+              className={cn(
+                "px-4 py-3 rounded-xl border text-xs space-y-1.5",
+                result.gate_source === "live"
+                  ? "border-border bg-secondary/40 text-muted-foreground"
+                  : "border-yellow-500/25 bg-yellow-500/5 text-yellow-300",
+              )}
+            >
+              <p className="font-semibold flex items-center gap-1.5">
+                {result.gate_source !== "live" && (
+                  <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                )}
+                {result.gate_source === "live"
+                  ? "Gate engine live — mengukur selector yang terpasang"
+                  : "Gate PROKSI — BUKAN selector yang terpasang (pakai TF bertanda live)"}
+                {result.tier_policy && (
+                  <span className="font-mono font-normal opacity-70">
+                    {" · "}
+                    {result.tier_policy}
+                    {result.tier_spec_hash ? ` ${result.tier_spec_hash}` : ""}
+                  </span>
+                )}
+              </p>
+              {result.policy_notes && result.policy_notes.length > 0 && (
+                <ul className="list-disc pl-5 space-y-0.5 text-[11px] opacity-90">
+                  {result.policy_notes.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
 
           {/* Key stats */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -488,7 +550,7 @@ export default function BacktestContent() {
           </Section>
 
           {/* Tier stats */}
-          <Section title="Win Rate per Tier">
+          <Section title="Win Rate per Tier (label konfluensi — tier tidak memprediksi hasil)">
             {Object.keys(result.tier_stats).length === 0 ? (
               <div className="p-5 text-sm text-muted-foreground">
                 Tidak ada trade yang terjadi pada backtest ini.
