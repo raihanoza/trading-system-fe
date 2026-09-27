@@ -1,4 +1,26 @@
-import type { TierMeta } from "@/types";
+import type { ScoreDetails, Signal, TierMeta } from "@/types";
+
+/** Empty historical details keep the legacy explanation; zero is a valid score. */
+export function weightedScoreDetails(
+  details: Signal["score_details"],
+): ScoreDetails | null {
+  if (!details || details.policy !== "weighted-v1" ||
+      typeof details.score !== "number" || !Number.isFinite(details.score) ||
+      details.score < 0 || details.score > 100) return null;
+  return {
+    policy: details.policy,
+    contract_hash: details.contract_hash ?? "",
+    score: details.score,
+    threshold: typeof details.threshold === "number" && Number.isFinite(details.threshold)
+      ? details.threshold : null,
+    positive_factors: details.positive_factors ?? [],
+    negative_factors: details.negative_factors ?? [],
+    veto: details.veto ?? [],
+    tier_reason: details.tier_reason ?? "",
+    groups: details.groups ?? {},
+    confidence_calibrated: details.confidence_calibrated === true,
+  };
+}
 
 export interface TierLadder {
   currentTier: string;

@@ -15,6 +15,8 @@ import {
 import { TIER_CONFIG, type ShadowSignal } from "@/types";
 import { Badge } from "@/components/ui/badge";
 import { getTierSpecs } from "@/lib/api";
+import { weightedScoreDetails } from "@/lib/tiers";
+import WeightedExplanation from "./WeightedExplanation";
 import { formatGateLabel, getGateDescription } from "@/lib/gates";
 import { cn, formatPrice } from "@/lib/utils";
 
@@ -258,6 +260,7 @@ function ShadowCard({ s }: { s: ShadowSignal }) {
   // tier, cuma tidak disimpan ulang. Pembedanya `action`: SKIP = tanpa tier.
   const reachedTier = s.action !== "SKIP";
   const tier = reachedTier ? TIER_CONFIG[s.tier] : null;
+  const scoreDetails = weightedScoreDetails(s.score_details);
 
   return (
     <div className="rounded-xl border border-border bg-card/40 p-4 space-y-3">
@@ -314,13 +317,13 @@ function ShadowCard({ s }: { s: ShadowSignal }) {
         </p>
       )}
 
-      <GateStrip s={s} />
+      {scoreDetails ? <WeightedExplanation details={scoreDetails} /> : <GateStrip s={s} />}
 
       <p
         title={s.reason}
         className="text-xs text-muted-foreground/80 leading-relaxed border-t border-border pt-2"
       >
-        {kind === "tier"
+        {kind === "tier" && !scoreDetails
           ? "Gate di atas belum cukup untuk tier mana pun — lihat chip yang redup."
           : stripMarker(s.reason)}
         {kind === "preflight" && (

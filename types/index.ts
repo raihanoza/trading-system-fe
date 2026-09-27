@@ -27,6 +27,19 @@ export const SIGNAL_HIDUP: readonly SignalStatus[] = [
 ] as const;
 export type Submarket = "IDX" | "US" | "Crypto" | "Forex";
 
+export interface ScoreDetails {
+  policy: string;
+  contract_hash: string;
+  score: number;
+  threshold: number | null;
+  positive_factors: { factor: string; points: number }[];
+  negative_factors: { factor: string; points: number }[];
+  veto: string[];
+  tier_reason: string;
+  groups: Record<string, number>;
+  confidence_calibrated: boolean;
+}
+
 export interface Signal {
   id: number;
   ticker: string;
@@ -50,6 +63,8 @@ export interface Signal {
   // undefined/null = sinyal DIBUAT SEBELUM 29 Agu 2026; sengaja tidak
   // di-backfill karena `confidence` lama bukan besaran yang sama.
   evidence_pct?: number | null;
+  // Skor dekomposisi, bukan probabilitas menang. {} / null = baris lama.
+  score_details?: Partial<ScoreDetails> | null;
   risk_idr: number;
   position_idr: number;
   gates_passed: string[];
@@ -225,6 +240,17 @@ export interface TierMeta {
 
 export interface TierSpecsResponse {
   spec_hash: string;
+  policy?: string;
+  scoring?: {
+    thresholds?: Record<string, number>;
+    groups?: Record<string, number>;
+    semantics?: string;
+  };
+  confidence_calibrated?: boolean;
+  confidence_note?: string;
+  legacy_policy?: string;
+  legacy_spec_hash?: string;
+  legacy_fields?: string[];
   tiers: TierMeta[];
   // Gate yang BENAR-BENAR menentukan tier, vs gate KANDIDAT (protokol 3.7)
   // yang dihitung dan disimpan tapi tidak menentukan apa pun. Dipisahkan di
@@ -542,6 +568,7 @@ export interface DirectionsMeta {
 }
 
 export interface ScanResponse {
+  funnel?: Record<string, unknown>;
   scanned: string;
   signals_found: number;
   signals: Signal[];

@@ -10,6 +10,7 @@ import {
   TIER_CONFIG,
   MARKET_CONFIG,
   TierMeta,
+  TierSpecsResponse,
 } from "@/types";
 import {
   formatIDR,
@@ -20,7 +21,8 @@ import {
 } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { api, getTierSpecs } from "@/lib/api";
-import { computeTierLadder, tierSpec, type TierLadder } from "@/lib/tiers";
+import { computeTierLadder, tierSpec, weightedScoreDetails, type TierLadder } from "@/lib/tiers";
+import WeightedExplanation from "./WeightedExplanation";
 import { formatGateLabel, getGateDescription } from "@/lib/gates";
 import {
   TrendingUp,
@@ -888,11 +890,13 @@ export default function SignalCard({ signal, onTrade }: Props) {
   const stale = signal.created_at ? isStale(signal.created_at) : false;
 
   // B2 — tier specs (fetch sekali, dibagi via cache) untuk tier ladder.
-  const [tiers, setTiers] = useState<TierMeta[] | null>(null);
+  const [tierMetadata, setTierMetadata] = useState<TierSpecsResponse | null>(null);
+  const tiers = tierMetadata?.tiers;
+  const scoreDetails = weightedScoreDetails(signal.score_details);
   useEffect(() => {
     let alive = true;
     getTierSpecs()
-      .then((r) => alive && setTiers(r.tiers))
+      .then((r) => alive && setTierMetadata(r))
       .catch(() => {});
     return () => {
       alive = false;
@@ -904,10 +908,10 @@ export default function SignalCard({ signal, onTrade }: Props) {
     ...(Array.isArray(signal.gates_passed) ? signal.gates_passed : []),
     ...(optionalRecorded ? (signal.optional_passed as string[]) : []),
   ];
-  const ladder = tiers
+  const ladder = !scoreDetails && tiers
     ? computeTierLadder(signal.tier, knownTrue, signal.rr_ratio, tiers)
     : null;
-  const spec = tiers ? tierSpec(signal.tier, tiers) : undefined;
+  const spec = !scoreDetails && tiers ? tierSpec(signal.tier, tiers) : undefined;
 
   // News = absolute-mandatory, jadi selalu lolos untuk sinyal yang tampil;
   // tandai merah hanya kalau eksplisit ada di gates_failed (defensif).
@@ -971,7 +975,11 @@ export default function SignalCard({ signal, onTrade }: Props) {
             memakainya di sini berarti menampilkan angka yang identik di setiap
             kartu. `evidence_pct` (berapa banyak bukti opsional yang lolos)
             adalah satu-satunya yang bervariasi. */}
-        {typeof signal.evidence_pct === "number" ? (
+        {scoreDetails ? (
+          <span className="text-xs text-muted-foreground font-mono" title="Skor berbobot, bukan peluang menang; belum dikalibrasi untuk kontrak ini.">
+            {scoreDetails.score}/100 skor
+          </span>
+        ) : typeof signal.evidence_pct === "number" ? (
           <div
             className="flex items-center gap-1.5"
             title={
@@ -1133,7 +1141,9 @@ export default function SignalCard({ signal, onTrade }: Props) {
       <SignalReason reason={signal.reason ?? ""} />
 
       {/* D1 — panel "kenapa sinyal ini muncul?" */}
-      <WhyThisSignal signal={signal} spec={spec} />
+      {scoreDetails ? (
+        <WeightedExplanation details={scoreDetails} metadata={tierMetadata} />
+      ) : <WhyThisSignal signal={signal} spec={spec} />}
 
       {/* D5 — kapan sinyal ini batal, dinyatakan SEBELUM apa pun terjadi */}
       <InvalidationPanel invalidation={signal.invalidation} />

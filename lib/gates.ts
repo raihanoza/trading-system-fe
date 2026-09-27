@@ -14,6 +14,11 @@ export const GATE_LABELS: Record<
     label: "HTF Trend",
     description: "Trend di higher timeframe sejalan dengan signal",
   },
+  mtf_confirmed: {
+    label: "HTF Trend (alias MTF)",
+    description:
+      "Alias historis dari HTF Trend pada crypto/forex; bukan bukti kedua",
+  },
   bos_or_choch: {
     label: "BOS/CHoCH",
     description: "Ada Break of Structure atau Change of Character",
