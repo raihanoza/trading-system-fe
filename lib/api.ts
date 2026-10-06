@@ -20,8 +20,40 @@ import type {
   SignalLogResponse,
 } from "@/types";
 import type { ContractInfo, ContractParam } from "@/types/contract";
+import type { BackendRuntime } from "@/types/runtime";
+import {
+  ApiError,
+  kindForStatus,
+  parseErrorBody,
+} from "@/lib/api-error";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+/**
+ * Semua permintaan browser lewat proxy same-origin di server frontend
+ * (`app/api/backend/[...path]`). Alasannya (4 Okt 2026):
+ *
+ * - token write backend (`API_WRITE_TOKEN`) hanya ada di environment server
+ *   frontend — tidak pernah di bundle, localStorage, atau Git;
+ * - allowlist CORS backend tidak lagi menentukan apakah UI bisa bekerja.
+ *
+ * Sebelumnya sembilan berkas menyalin `NEXT_PUBLIC_API_URL || "localhost:8000"`
+ * masing-masing dan memanggil `fetch` langsung — pola "konstanta kedua tak
+ * ikut" yang sama yang berulang di backend.
+ */
+export const DEFAULT_API_BASE = "/api/backend";
+
+let apiBase = DEFAULT_API_BASE;
+let fetchImpl: typeof fetch = (...args) => fetch(...args);
+
+/** Untuk tes: arahkan klien ke server lain atau fetch palsu. */
+export function configureApi(opts: { baseUrl?: string; fetch?: typeof fetch }) {
+  if (opts.baseUrl !== undefined) apiBase = opts.baseUrl.replace(/\/$/, "");
+  if (opts.fetch !== undefined) fetchImpl = opts.fetch;
+}
+
+export function resetApiConfig() {
+  apiBase = DEFAULT_API_BASE;
+  fetchImpl = (...args) => fetch(...args);
+}
 
 /**
  * Normalize signal from API — ensure gates are always arrays.
@@ -56,17 +88,84 @@ function normalizeSignals(data: unknown): unknown {
   return data;
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
-    headers: { "Content-Type": "application/json" },
-    ...options,
-  });
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`API ${res.status}: ${err}`);
+/**
+ * Satu-satunya jalur HTTP ke backend. Melempar `ApiError` yang sudah
+ * diklasifikasikan (lihat `lib/api-error.ts`), tidak pernah `Error` mentah.
+ */
+export async function apiRequest<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const method = (options.method ?? "GET").toUpperCase();
+  const headers = new Headers(options.headers);
+  if (options.body !== undefined && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
   }
-  return res.json();
+  headers.set("Accept", "application/json");
+
+  let res: Response;
+  try {
+    res = await fetchImpl(`${apiBase}${path}`, { ...options, method, headers });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "AbortError") throw e;
+    throw new ApiError({
+      status: null,
+      kind: "network",
+      detail: e instanceof Error ? e.message : String(e),
+      method,
+      path,
+    });
+  }
+
+  const text = await res.text();
+  let body: unknown = undefined;
+  let parsed = false;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+      parsed = true;
+    } catch {
+      body = text;
+    }
+  }
+
+  if (!res.ok) {
+    const { detail, issues, proxyKind } = parseErrorBody(body);
+    throw new ApiError({
+      status: res.status,
+      kind: kindForStatus(res.status, detail, proxyKind),
+      detail: detail || res.statusText || "",
+      issues,
+      method,
+      path,
+    });
+  }
+  if (!text) return undefined as T;
+  if (!parsed) {
+    throw new ApiError({
+      status: res.status,
+      kind: "bad_response",
+      detail: text.slice(0, 120),
+      method,
+      path,
+    });
+  }
+  return body as T;
 }
+
+export const apiGet = <T>(path: string, init?: RequestInit) =>
+  apiRequest<T>(path, { ...init, method: "GET" });
+
+export const apiSend = <T>(
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
+  path: string,
+  body?: unknown,
+  init?: RequestInit,
+) =>
+  apiRequest<T>(path, {
+    ...init,
+    method,
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+
+const request = apiRequest;
 
 /**
  * Respons scan, dinormalisasi sama seperti `/signals`.
@@ -94,6 +193,12 @@ async function scanRequest(path: string): Promise<ScanResponse> {
 export const api = {
   health: () => request<{ status: string; version: string }>("/health"),
   stats: () => request<Stats>("/stats"),
+
+  // Identitas proses backend (sidik kode, mode paper/live, kontrak tier).
+  // 404 = backend versi lama yang belum di-restart ke endpoint ini.
+  system: {
+    runtime: () => request<BackendRuntime>("/system/runtime"),
+  },
 
   // Watchdog (Fase A) — "tidak ada sinyal" vs "scanner mati" harus bisa dibedakan.
   heartbeat: () => request<Heartbeat>("/system/heartbeat"),

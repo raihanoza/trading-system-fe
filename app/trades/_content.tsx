@@ -6,6 +6,7 @@ import { formatIDR, formatPrice, timeAgo, cn } from "@/lib/utils";
 import type { Trade } from "@/types";
 import CloseTradeDialog from "@/components/signals/CloseTradeDialog";
 import { RefreshCw, X } from "lucide-react";
+import { ApiErrorNotice, EmptyState } from "@/components/system/StateNotice";
 
 const OUTCOME: Record<string, { label: string; cls: string }> = {
   win:       { label: "Win",  cls: "bg-profit/10  text-profit  border-profit/20"              },
@@ -15,7 +16,7 @@ const OUTCOME: Record<string, { label: string; cls: string }> = {
 };
 
 export default function TradesContent() {
-  const { trades, loading, reload, totalPnl, openCount, winRate, closedCount } = useTrades();
+  const { trades, loading, error, reload, totalPnl, openCount, winRate, closedCount } = useTrades();
 
   const [filter,     setFilter]     = useState<"all" | "open" | "closed">("all");
   const [closeTrade, setCloseTrade] = useState<Trade | null>(null);
@@ -47,7 +48,7 @@ export default function TradesContent() {
         {[
           { label: "Total Trades", value: String(trades.length),                                  pnl: undefined },
           { label: "Open",         value: String(openCount),                                       pnl: undefined },
-          { label: "Win Rate",     value: closedCount ? `${winRate}%` : "—",                      pnl: undefined },
+          { label: `Win rate jurnal (n=${closedCount})`, value: closedCount ? `${winRate}%` : "—", pnl: undefined },
           { label: "Total P&L",    value: formatIDR(totalPnl),                                     pnl: totalPnl  },
         ].map(s => (
           <div key={s.label} className="rounded-xl border border-border bg-card p-4">
@@ -63,6 +64,13 @@ export default function TradesContent() {
           </div>
         ))}
       </div>
+
+      <p className="text-[11px] text-muted-foreground -mt-2">
+        Jurnal ini hanya trade yang dicatat manual — terpisah dari pengukuran
+        forward sinyal (lihat Report Card). Win rate dari sampel sekecil ini tidak
+        bermakna, dan Total P&L menjumlah semua baris, termasuk baris lama yang
+        satuannya belum terverifikasi (audit 4 Okt 2026, temuan 8).
+      </p>
 
       {/* Filter + refresh */}
       <div className="flex items-center gap-2">
@@ -92,9 +100,23 @@ export default function TradesContent() {
         </div>
 
         {loading ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">Loading...</div>
+          <div className="p-8 text-center text-sm text-muted-foreground">Memuat…</div>
+        ) : error ? (
+          <ApiErrorNotice error={error} action="memuat trade" onRetry={reload} className="m-3" />
         ) : filtered.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">No trades</div>
+          <EmptyState
+            className="m-3 border-0"
+            title={
+              trades.length === 0
+                ? "Belum ada trade tercatat di jurnal."
+                : `Tidak ada trade dengan filter "${filter}".`
+            }
+            description={
+              trades.length === 0
+                ? "Dalam mode paper, eksekusi tidak dicatat manual; sinyal diukur otomatis oleh resolver."
+                : undefined
+            }
+          />
         ) : (
           filtered.map(t => {
             const oc = OUTCOME[t.outcome] ?? OUTCOME.open;

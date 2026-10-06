@@ -2,10 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { usePathname } from "next/navigation";
-import { RefreshCw, Wifi, WifiOff } from "lucide-react";
-import { api } from "@/lib/api";
-import { getWIBTime, cn } from "@/lib/utils";
+import { getWIBTime } from "@/lib/utils";
 import HeartbeatChip from "./HeartbeatChip";
+import RuntimeStatusChip from "@/components/system/RuntimeStatusChip";
 
 const ROUTE_TITLES: Record<string, string> = {
   "/": "Overview",
@@ -20,9 +19,9 @@ const ROUTE_TITLES: Record<string, string> = {
   "/journal": "Trading Journal",
   "/market": "Market Overview",
   "/sentiment": "Sentiment Analysis",
-  "/ml": "ML Signal Optimizer",
+  "/ml": "ML (eksperimental)",
   "/backtest": "Backtesting Engine",
-  "/settings": "Settings",
+  "/settings": "Sistem & Runtime",
 };
 
 function getTitle(pathname: string): string {
@@ -32,33 +31,18 @@ function getTitle(pathname: string): string {
 export default function Header() {
   const pathname = usePathname();
   const title = getTitle(pathname);
-
-  const [connected, setConnected] = useState<boolean | null>(null);
   const [time, setTime] = useState("");
-  const [checking, setChecking] = useState(false);
-
-  const checkHealth = async () => {
-    setChecking(true);
-    try {
-      await api.health();
-      setConnected(true);
-    } catch {
-      setConnected(false);
-    } finally {
-      setChecking(false);
-    }
-  };
 
   useEffect(() => {
-    checkHealth();
-    const healthInterval = setInterval(checkHealth, 30_000);
-    const timeInterval = setInterval(() => setTime(getWIBTime()), 1_000);
-    setTime(getWIBTime());
+    // setState hanya di callback timer — bukan sinkron di badan effect.
+    const tick = () => setTime(getWIBTime());
+    const first = setTimeout(tick, 0);
+    const id = setInterval(tick, 1_000);
     return () => {
-      clearInterval(healthInterval);
-      clearInterval(timeInterval);
+      clearTimeout(first);
+      clearInterval(id);
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <header className="h-14 border-b border-border flex items-center justify-between px-4 lg:px-6 bg-background/80 backdrop-blur-sm sticky top-0 z-40">
@@ -70,39 +54,11 @@ export default function Header() {
           {time}
         </span>
 
-        {/* Watchdog — API "Connected" hanya berarti server hidup, bukan scanner. */}
+        {/* Watchdog — "API terhubung" hanya berarti server hidup, bukan scanner. */}
         <HeartbeatChip />
 
-        {/* API Status */}
-        <button
-          onClick={checkHealth}
-          title="Click to check API connection"
-          className={cn(
-            "flex items-center gap-1.5 px-2.5 py-1 rounded-md text-xs font-medium border transition-all",
-            connected === null
-              ? "border-border text-muted-foreground bg-secondary/50"
-              : connected
-                ? "bg-primary/10 text-primary border-primary/20 hover:bg-primary/15"
-                : "bg-destructive/10 text-destructive border-destructive/20",
-          )}
-        >
-          {checking ? (
-            <RefreshCw className="w-3 h-3 animate-spin" />
-          ) : connected ? (
-            <Wifi className="w-3 h-3" />
-          ) : (
-            <WifiOff className="w-3 h-3" />
-          )}
-          <span>
-            {checking
-              ? "Checking"
-              : connected === null
-                ? "—"
-                : connected
-                  ? "Connected"
-                  : "Offline"}
-          </span>
-        </button>
+        {/* Koneksi API (dari server frontend), mode PAPER/LIVE, build FE */}
+        <RuntimeStatusChip />
       </div>
     </header>
   );

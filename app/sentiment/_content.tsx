@@ -13,8 +13,8 @@ import {
   Newspaper,
   Radio,
 } from "lucide-react";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { apiGet } from "@/lib/api";
+import { ApiErrorNotice } from "@/components/system/StateNotice";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -199,10 +199,9 @@ export default function SentimentContent() {
   const [ticker, setTicker] = useState("");
   const [signalAction, setSignalAction] = useState("");
   const [signalTier, setSignalTier] = useState("");
-  const [newsapiKey, setNewsapiKey] = useState("");
   const [data, setData] = useState<SentimentData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   const analyze = useCallback(
     async (t?: string) => {
@@ -215,19 +214,16 @@ export default function SentimentContent() {
         const params = new URLSearchParams();
         if (signalAction) params.set("signal_action", signalAction);
         if (signalTier) params.set("signal_tier", signalTier);
-        if (newsapiKey) params.set("newsapi_key", newsapiKey);
 
-        const url = `${API}/sentiment/${market}/${target}${params.toString() ? "?" + params : ""}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
-        setData(await res.json());
+        const path = `/sentiment/${encodeURIComponent(market)}/${encodeURIComponent(target)}${params.toString() ? "?" + params : ""}`;
+        setData(await apiGet<SentimentData>(path));
       } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to fetch sentiment");
+        setError(e);
       } finally {
         setLoading(false);
       }
     },
-    [market, ticker, signalAction, signalTier, newsapiKey],
+    [market, ticker, signalAction, signalTier],
   );
 
   const colors = data
@@ -352,27 +348,16 @@ export default function SentimentContent() {
                 )}
               </select>
             </div>
-            <div className="col-span-2">
-              <label className="text-[11px] text-muted-foreground block mb-1">
-                NewsAPI Key (optional — 100 req/day gratis di newsapi.org)
-              </label>
-              <input
-                value={newsapiKey}
-                onChange={(e) => setNewsapiKey(e.target.value)}
-                placeholder="Kosongkan jika tidak punya"
-                className="w-full px-3 py-1.5 text-xs rounded-lg border border-border bg-secondary text-foreground placeholder:text-muted-foreground focus:outline-none"
-              />
-            </div>
+            {/* Kolom "NewsAPI Key" dicabut 4 Okt 2026: kunci yang diketik di
+                browser dikirim sebagai query string (`?newsapi_key=`) dan
+                ikut tercatat di log akses API. Kunci pihak ketiga harus
+                tinggal di konfigurasi server, bukan di browser. */}
           </div>
         </details>
       </div>
 
       {/* Error */}
-      {error && (
-        <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      {error != null && <ApiErrorNotice error={error} action="memuat sentimen" />}
 
       {/* Loading */}
       {loading && (
@@ -616,7 +601,7 @@ export default function SentimentContent() {
                 Tidak ada headline yang relevan ditemukan
               </p>
               <p className="text-xs text-muted-foreground/60 mt-1">
-                Coba tambahkan NewsAPI key untuk lebih banyak sumber berita
+                Sumber berita terbatas pada yang dikonfigurasi di server backend.
               </p>
             </div>
           )}

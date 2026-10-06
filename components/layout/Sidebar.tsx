@@ -38,7 +38,7 @@ const NAV = [
   { href: "/journal", icon: Book, label: "Journal" },
   { href: "/sentiment", icon: Radio, label: "Sentiment" },
   { href: "/backtest", icon: Rewind, label: "Backtest" },
-  { href: "/ml", icon: Brain, label: "ML Optimizer" },
+  { href: "/ml", icon: Brain, label: "ML (eksperimental)" },
 ];
 
 export default function Sidebar() {
@@ -88,7 +88,7 @@ export default function Sidebar() {
           className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground hover:bg-secondary hover:text-foreground transition-all"
         >
           <Settings className="w-4 h-4 shrink-0" />
-          <span className="hidden lg:block font-medium">Settings</span>
+          <span className="hidden lg:block font-medium">Sistem</span>
         </Link>
       </div>
     </aside>

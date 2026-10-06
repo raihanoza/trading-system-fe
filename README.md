@@ -1,36 +1,78 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# trading-system-fe
 
-## Getting Started
+UI Next.js untuk backend `trading-system` (FastAPI, repo tetangga
+`../trading-system`). Sistemnya **paper-only**: UI menampilkan sinyal,
+pengukuran, dan jurnal; tidak ada eksekusi order.
 
-First, run the development server:
+## Arsitektur singkat
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+```
+browser ──► /api/backend/*  (route handler, server Next) ──► backend :4010
+        └─► /api/runtime    (identitas build + status backend)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+- Browser **tidak pernah** memanggil backend langsung. Semua permintaan lewat
+  proxy same-origin `app/api/backend/[...path]` (`lib/server/backend.ts`).
+- Bila backend mewajibkan `API_WRITE_TOKEN` untuk POST/PUT/PATCH/DELETE, proxy
+  yang menempelkannya dari environment server. Token tidak masuk bundle,
+  localStorage, respons API, atau Git.
+- Pagar proxy: Host harus loopback (anti DNS rebinding); mutasi harus
+  same-origin (anti CSRF); batas waktu 15 menit (scan pernah >300 detik).
+- Galat diklasifikasikan di `lib/api-error.ts` (401, 403/paper, 404, 409, 422,
+  5xx, backend mati/lambat, jaringan, respons rusak) dan dijelaskan lewat
+  `components/system/StateNotice.tsx`. "Kosong" dan "gagal" tidak pernah
+  tampil sama.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Konfigurasi
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Salin `.env.example` ke `.env.production.local` (dibaca `next build` dan
+`next start`). Variabel:
 
-## Learn More
+| Nama | Wajib | Arti |
+|---|---|---|
+| `TRADING_API_URL` | tidak (bawaan `http://127.0.0.1:4010`) | Alamat backend untuk proxy server |
+| `API_WRITE_TOKEN` | hanya bila backend mewajibkannya | Sama dengan `API_WRITE_TOKEN` backend |
+| `TRADING_API_TIMEOUT_MS` | tidak (900000) | Batas waktu proxy |
+| `FE_ALLOWED_HOSTS` | tidak | Hostname tambahan selain loopback |
 
-To learn more about Next.js, take a look at the following resources:
+`NEXT_PUBLIC_API_URL` lama masih dibaca sebagai cadangan `TRADING_API_URL`,
+tetapi tidak lagi dipakai browser.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Identitas build & runtime
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `next.config.ts` menghitung identitas build lewat `lib/build-identity.cjs`:
+  commit git, status dirty, dan **sidik isi sumber** (`app/`, `components/`,
+  `hooks/`, `lib/`, `types/`, `public/`, berkas konfigurasi akar; tanpa
+  `.env*`). BUILD_ID = `<commit7>-<c|d|u><sidik10>` dan deterministik:
+  sumber yang sama → ID yang sama.
+- `GET /api/runtime` melaporkan identitas build, sidik sumber di disk saat
+  ini (`source_matches_build`), status koneksi backend, dan isi
+  `GET /system/runtime` backend (sidik kode, mode paper/live, kontrak tier,
+  lantai vonis forward).
+- Chip di header dan halaman **Sistem** (`/settings`) menampilkan semuanya.
 
-## Deploy on Vercel
+## Skrip
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+npm run dev            # pengembangan (port 3000)
+npm run lint
+npm run typecheck
+npm test               # Vitest: klien API, proxy, runtime, komponen, integrasi
+npm run build:verify   # build produksi ke .next-verify (tidak menyentuh .next)
+npm run check:secrets  # pindai .next (atau: node scripts/check-bundle-secrets.mjs .next-verify)
+npm run verify         # semua di atas, berurutan
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Tes `tests/integration/backend-contract.test.ts` menyalakan backend FastAPI
+asli dari `../trading-system` (atau `TRADING_BACKEND_DIR`) dengan DB, cache,
+log, dan cwd di folder sementara; tes dilewati bila venv backend tidak ada.
+
+## Deploy (service Windows `TradingSystemFrontend`, port 4011)
+
+Service menjalankan `next start`, yang menyajikan isi `.next` — **bukan**
+sumber. Perubahan sumber baru terlihat setelah build ulang, dan build harus
+dijalankan saat service mati (`next start` memegang berkas di `.next`).
+Gunakan `ops/windows-service/redeploy.ps1 -Services frontend` di repo backend
+(Administrator), lalu periksa `GET http://127.0.0.1:4011/api/runtime`:
+`frontend.build_id` harus sama dengan ID build verifikasi dan
+`source_matches_build` harus `true`.

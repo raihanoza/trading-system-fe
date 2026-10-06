@@ -15,8 +15,8 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { apiSend } from "@/lib/api";
+import { ApiErrorNotice } from "@/components/system/StateNotice";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -266,7 +266,7 @@ export default function BacktestContent() {
   const [years, setYears] = useState(2);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BacktestData | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [showTrades, setShowTrades] = useState(false);
 
   const run = useCallback(async () => {
@@ -275,16 +275,21 @@ export default function BacktestContent() {
     setError(null);
     setResult(null);
     try {
-      const url = `${API}/backtest/run?ticker=${encodeURIComponent(ticker.trim().toUpperCase())}&market=${market}&interval=${interval}&years=${years}`;
-      const res = await fetch(url, { method: "POST" });
-      const data = await res.json();
-      if (data.error) {
-        setError(data.error);
+      const q = new URLSearchParams({
+        ticker: ticker.trim().toUpperCase(),
+        market,
+        interval,
+        years: String(years),
+      });
+      const data = await apiSend<BacktestData & { error?: string }>("POST", `/backtest/run?${q}`);
+      if (data?.error) {
+        // Backend melaporkan sebagian kegagalan sebagai 200 + `error`.
+        setError(new Error(data.error));
       } else {
         setResult(data);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Request failed");
+      setError(e);
     } finally {
       setLoading(false);
     }
@@ -395,12 +400,7 @@ export default function BacktestContent() {
       </div>
 
       {/* Error */}
-      {error && (
-        <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-destructive/20 bg-destructive/5 text-sm text-destructive">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
-          {error}
-        </div>
-      )}
+      {error != null && <ApiErrorNotice error={error} action="menjalankan backtest" />}
 
       {/* Loading */}
       {loading && (
@@ -784,7 +784,7 @@ export default function BacktestContent() {
       )}
 
       {/* Empty state */}
-      {!loading && !result && !error && (
+      {!loading && !result && error == null && (
         <div className="flex flex-col items-center justify-center py-20 border border-dashed border-border rounded-xl">
           <BarChart3 className="w-10 h-10 text-muted-foreground/30 mb-4" />
           <p className="text-sm text-muted-foreground">

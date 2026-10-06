@@ -4,6 +4,7 @@ import { useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { describeApiError } from "@/lib/api-error";
 
 interface Props {
   label: string;
@@ -30,8 +31,9 @@ export default function ScanButton({
         toast.info("No signals", { description: result.message });
       }
     } catch (err) {
-      toast.error("Scan failed", {
-        description: err instanceof Error ? err.message : "Unknown error",
+      const d = describeApiError(err, `scan ${label}`);
+      toast.error(d.title, {
+        description: [d.description, d.hint].filter(Boolean).join(" "),
       });
     } finally {
       setScanning(false);

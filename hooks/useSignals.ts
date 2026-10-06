@@ -5,26 +5,29 @@ import type { Signal } from "@/types";
 export function useSignals(market?: string, limit = 20) {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
-  const load = useCallback(async () => {
+  const fetchSignals = useCallback(
+    () =>
+      (market ? api.signals.byMarket(market, limit) : api.signals.all(limit))
+        .then((data) => {
+          setSignals(Array.isArray(data) ? data : []);
+          setError(null);
+        })
+        .catch((e: unknown) => setError(e))
+        .finally(() => setLoading(false)),
+    [market, limit],
+  );
+
+  const reload = useCallback(() => {
     setLoading(true);
-    setError(null);
-    try {
-      const data = market
-        ? await api.signals.byMarket(market, limit)
-        : await api.signals.all(limit);
-      setSignals(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load signals");
-    } finally {
-      setLoading(false);
-    }
-  }, [market, limit]);
+    return fetchSignals();
+  }, [fetchSignals]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    // setState hanya di callback promise — bukan sinkron di badan effect.
+    void fetchSignals();
+  }, [fetchSignals]);
 
-  return { signals, loading, error, reload: load };
+  return { signals, loading, error, reload };
 }

@@ -16,8 +16,9 @@ import {
   Flame,
   CheckCircle2,
 } from "lucide-react";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { toast } from "sonner";
+import { apiGet, apiSend } from "@/lib/api";
+import { describeApiError } from "@/lib/api-error";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -325,21 +326,21 @@ export default function MarketContent() {
       }));
 
       try {
-        const url = `${API}/market/overview/${key}${forceRefresh ? "?refresh=true" : ""}`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: MarketResponse = await res.json();
+        const data = await apiGet<MarketResponse>(
+          `/market/overview/${key}${forceRefresh ? "?refresh=true" : ""}`,
+        );
         setMarketStates((s) => ({
           ...s,
           [key]: { data, loading: false, error: data.error ?? null },
         }));
       } catch (e) {
+        const d = describeApiError(e, `memuat ${key}`);
         setMarketStates((s) => ({
           ...s,
           [key]: {
             ...s[key],
             loading: false,
-            error: e instanceof Error ? e.message : "Failed",
+            error: `${d.title}. ${d.description}`,
           },
         }));
       } finally {
@@ -362,7 +363,7 @@ export default function MarketContent() {
   const handlePrewarm = async () => {
     setPrewarming(true);
     try {
-      await fetch(`${API}/market/prewarm`, { method: "POST" });
+      await apiSend("POST", "/market/prewarm");
       // Poll cache status every 5s, refresh markets as they become available
       const startTime = Date.now();
       const poll = async () => {
@@ -381,7 +382,9 @@ export default function MarketContent() {
         setTimeout(poll, 5000);
       };
       setTimeout(poll, 3000);
-    } catch {
+    } catch (e) {
+      const d = describeApiError(e, "memanaskan cache market");
+      toast.error(d.title, { description: [d.description, d.hint].filter(Boolean).join(" ") });
       setPrewarming(false);
     }
   };
@@ -940,8 +943,8 @@ export default function MarketContent() {
         <div className="rounded-xl border border-border bg-secondary/30 p-3 text-[11px] text-muted-foreground space-y-1">
           <p className="font-medium text-foreground">💡 Tips Performance:</p>
           <p>
-            · Data di-cache 10 menit untuk hemat resource. Tombol "Refresh All"
-            untuk force scan ulang.
+            · Data di-cache 10 menit untuk hemat resource. Tombol &ldquo;Refresh
+            All&rdquo; untuk force scan ulang.
           </p>
           <p>
             · Pilih filter market satu per satu (IDX, US, dll) kalau ingin lebih

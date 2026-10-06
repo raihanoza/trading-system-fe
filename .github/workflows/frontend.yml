@@ -1,0 +1,22 @@
+name: frontend
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.19"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      # Tes integrasi backend dilewati otomatis di sini (repo backend tidak ada).
+      - run: npm test
+      - run: npm run build:verify
+      - run: node scripts/check-bundle-secrets.mjs .next-verify

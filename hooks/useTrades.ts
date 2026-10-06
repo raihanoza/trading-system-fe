@@ -5,23 +5,32 @@ import type { Trade } from "@/types";
 export function useTrades() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Galat dipertahankan sebagai objek (ApiError) supaya layar bisa
+  // membedakan "backend mati" dari "belum ada trade".
+  const [error, setError] = useState<unknown>(null);
 
-  const load = useCallback(async () => {
+  const fetchTrades = useCallback(
+    () =>
+      api.trades
+        .list()
+        .then((rows) => {
+          setTrades(Array.isArray(rows) ? rows : []);
+          setError(null);
+        })
+        .catch((e: unknown) => setError(e))
+        .finally(() => setLoading(false)),
+    [],
+  );
+
+  const reload = useCallback(() => {
     setLoading(true);
-    setError(null);
-    try {
-      setTrades(await api.trades.list());
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load trades");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    return fetchTrades();
+  }, [fetchTrades]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    // setState hanya di callback promise — bukan sinkron di badan effect.
+    void fetchTrades();
+  }, [fetchTrades]);
 
   const totalPnl = trades
     .filter((t) => t.pnl_idr !== null)
@@ -36,7 +45,7 @@ export function useTrades() {
     trades,
     loading,
     error,
-    reload: load,
+    reload,
     totalPnl,
     openCount,
     winRate,

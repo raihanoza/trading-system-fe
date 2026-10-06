@@ -13,8 +13,10 @@ import {
   Edit3,
   Check,
 } from "lucide-react";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { toast } from "sonner";
+import { apiGet, apiSend } from "@/lib/api";
+import { describeApiError } from "@/lib/api-error";
+import { ApiErrorNotice } from "@/components/system/StateNotice";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -119,30 +121,23 @@ const OUTCOME_STYLE: Record<string, string> = {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
+// Warna hijau/merah berdasarkan ambang win rate dicabut 4 Okt 2026: win rate
+// tanpa besar menang/kalah tidak menyatakan untung atau rugi. `rate === 0`
+// adalah angka sah (semua kalah), bukan "tidak ada data".
 function WinRateBar({ rate, total }: { rate: number | null; total: number }) {
-  if (!rate || total === 0)
+  if (rate === null || total === 0)
     return <span className="text-xs text-muted-foreground">—</span>;
-  const color =
-    rate >= 65 ? "bg-emerald-500" : rate >= 50 ? "bg-yellow-500" : "bg-red-500";
   return (
     <div className="flex items-center gap-2 flex-1 min-w-0">
       <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
         <div
-          className={`h-full rounded-full ${color}`}
+          className="h-full rounded-full bg-muted-foreground/60"
           style={{ width: `${rate}%` }}
         />
       </div>
-      <span
-        className={cn(
-          "text-xs font-mono font-semibold w-9 text-right shrink-0",
-          rate >= 65
-            ? "text-profit"
-            : rate >= 50
-              ? "text-warning"
-              : "text-loss",
-        )}
-      >
+      <span className="text-xs font-mono font-semibold w-16 text-right shrink-0 text-foreground">
         {rate}%
+        <span className="ml-1 text-[10px] font-normal text-muted-foreground">n={total}</span>
       </span>
     </div>
   );
@@ -198,16 +193,13 @@ function PostTradeReview({ entryId }: { entryId: number }) {
 
   useEffect(() => {
     let batal = false;
-    (async () => {
-      try {
-        const r = await fetch(`${API}/journal/${entryId}/review`);
-        if (!r.ok) throw new Error();
-        const json = (await r.json()) as ReviewData;
+    apiGet<ReviewData>(`/journal/${entryId}/review`)
+      .then((json) => {
         if (!batal) setData(json);
-      } catch {
+      })
+      .catch(() => {
         if (!batal) setError(true);
-      }
-    })();
+      });
     return () => {
       batal = true;
     };
@@ -266,13 +258,14 @@ function EntryCard({
   const saveNote = async () => {
     setSaving(true);
     try {
-      await fetch(`${API}/journal/${entry.id}/notes`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ post_trade_note: note }),
-      });
+      // Dulu respons tidak diperiksa: 401/422 tetap menutup editor seolah
+      // catatan tersimpan.
+      await apiSend("PATCH", `/journal/${entry.id}/notes`, { post_trade_note: note });
       setEditing(false);
       onNoteUpdate();
+    } catch (e) {
+      const d = describeApiError(e, "menyimpan catatan");
+      toast.error(d.title, { description: [d.description, d.hint].filter(Boolean).join(" ") });
     } finally {
       setSaving(false);
     }
@@ -365,7 +358,9 @@ function EntryCard({
 
         {/* Gates */}
         <div className="hidden md:block text-[10px] text-muted-foreground w-20 shrink-0">
-          {entry.gates_pass_count} gates · {entry.confidence}%
+          <span title="Confidence tersimpan saat sinyal terbit — bukan peluang menang; belum dikalibrasi untuk kontrak weighted-v1.">
+            {entry.gates_pass_count} gates · conf {entry.confidence}
+          </span>
         </div>
 
         {/* Time */}
@@ -550,42 +545,47 @@ export default function JournalContent() {
     "journal",
   );
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const mq = market !== "all" ? `?market=${market}` : "";
-      const [j, wr, su, ho] = await Promise.all([
-        fetch(
-          `${API}/journal?market=${market}&outcome=${outcome}&limit=100`,
-        ).then((r) => r.json()),
-        fetch(`${API}/journal/winrate/by-tier${mq}`).then((r) => r.json()),
-        fetch(`${API}/journal/stats/setup-analysis${mq}`).then((r) => r.json()),
-        fetch(`${API}/journal/stats/holding-analysis${mq}`).then((r) =>
-          r.json(),
-        ),
-      ]);
-      setEntries(j.entries ?? []);
-      setTiers(wr.tiers ?? []);
-      setSetups(su.setups ?? []);
-      setHolding(ho.buckets ?? []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
+  const [loadError, setLoadError] = useState<unknown>(null);
+
+  // Dulu `console.error` saja: backend mati tampil sebagai jurnal kosong.
+  const fetchAll = useCallback(() => {
+    const mq = market !== "all" ? `?market=${encodeURIComponent(market)}` : "";
+    const q = new URLSearchParams({ market, outcome, limit: "100" });
+    return Promise.all([
+      apiGet<{ entries?: JournalEntry[] }>(`/journal?${q}`),
+      apiGet<{ tiers?: TierWinRate[] }>(`/journal/winrate/by-tier${mq}`),
+      apiGet<{ setups?: SetupStat[] }>(`/journal/stats/setup-analysis${mq}`),
+      apiGet<{ buckets?: HoldingBucket[] }>(`/journal/stats/holding-analysis${mq}`),
+    ])
+      .then(([j, wr, su, ho]) => {
+        setEntries(j.entries ?? []);
+        setTiers(wr.tiers ?? []);
+        setSetups(su.setups ?? []);
+        setHolding(ho.buckets ?? []);
+        setLoadError(null);
+      })
+      .catch((e: unknown) => setLoadError(e))
+      .finally(() => setLoading(false));
   }, [market, outcome]);
 
+  const load = useCallback(() => {
+    setLoading(true);
+    return fetchAll();
+  }, [fetchAll]);
+
   useEffect(() => {
-    load();
-  }, [load]);
+    // setState hanya di callback promise — bukan sinkron di badan effect.
+    void fetchAll();
+  }, [fetchAll]);
 
   const sync = async () => {
     setSyncing(true);
     try {
-      const r = await fetch(`${API}/journal/sync`, { method: "POST" }).then(
-        (r) => r.json(),
-      );
-      if (r.synced > 0) await load();
+      const r = await apiSend<{ synced?: number }>("POST", "/journal/sync");
+      if ((r?.synced ?? 0) > 0) await load();
+    } catch (e) {
+      const d = describeApiError(e, "sinkronisasi jurnal");
+      toast.error(d.title, { description: [d.description, d.hint].filter(Boolean).join(" ") });
     } finally {
       setSyncing(false);
     }
@@ -644,9 +644,9 @@ export default function JournalContent() {
             color: "text-foreground",
           },
           {
-            label: "Win Rate",
+            label: `Win rate (n=${closed.length})`,
             value: closed.length ? `${winRate}%` : "—",
-            color: winRate >= 50 ? "text-profit" : "text-loss",
+            color: "text-foreground",
           },
           {
             label: "Total P&L",
@@ -690,7 +690,9 @@ export default function JournalContent() {
         ))}
       </div>
 
-      {loading ? (
+      {loadError != null && !loading ? (
+        <ApiErrorNotice error={loadError} action="memuat jurnal" onRetry={() => void load()} />
+      ) : loading ? (
         <div className="space-y-2">
           {[...Array(4)].map((_, i) => (
             <div
@@ -732,8 +734,8 @@ export default function JournalContent() {
                     Belum ada journal entries
                   </p>
                   <p className="text-xs text-muted-foreground/60 mt-1">
-                    Journal dibuat otomatis saat trade ditutup. Klik "Sync
-                    Journal" untuk sinkronisasi trades lama.
+                    Journal dibuat otomatis saat trade ditutup. Klik &ldquo;Sync
+                    Journal&rdquo; untuk sinkronisasi trades lama.
                   </p>
                 </div>
               ) : (

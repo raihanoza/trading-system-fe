@@ -10,13 +10,15 @@ import SignalCard from "@/components/signals/SignalCard";
 import ShadowSignals from "@/components/signals/ShadowSignals";
 import ScanButton from "@/components/ui/ScanButton";
 import RecordTradeDialog from "@/components/signals/RecordTradeDialog";
+import { ApiErrorNotice } from "@/components/system/StateNotice";
+import { describeApiError } from "@/lib/api-error";
 
 /** Hasil satu penekanan tombol scan — apa yang RUN ITU hasilkan. */
 type ScanResult = {
   published: Signal[];
   shadow: ShadowSignal[];
-  /** Market yang request-nya gagal. Kosong bukan berarti aman. */
-  failed: string[];
+  /** Market yang request-nya gagal, beserta sebabnya. Kosong bukan berarti aman. */
+  failed: { market: string; reason: string }[];
 };
 
 export default function OverviewContent() {
@@ -29,22 +31,33 @@ export default function OverviewContent() {
   // dengan sengaja — lihat catatan di `runScan`.
   const [scan, setScan] = useState<ScanResult | null>(null);
 
-  const loadData = useCallback(async () => {
+  // Sampai 4 Okt 2026 galat di sini hanya `console.error`, lalu layar berkata
+  // "Belum ada sinyal tersimpan — jalankan scan" — backend mati dan DB kosong
+  // tampil identik. Galatnya kini disimpan dan ditampilkan.
+  const [loadError, setLoadError] = useState<unknown>(null);
+
+  const fetchData = useCallback(
+    () =>
+      Promise.all([api.stats(), api.signals.all(12)])
+        .then(([s, sig]) => {
+          setStats(s);
+          setSignals(Array.isArray(sig) ? sig : []);
+          setLoadError(null);
+        })
+        .catch((e: unknown) => setLoadError(e))
+        .finally(() => setLoading(false)),
+    [],
+  );
+
+  const loadData = useCallback(() => {
     setLoading(true);
-    try {
-      const [s, sig] = await Promise.all([api.stats(), api.signals.all(12)]);
-      setStats(s);
-      setSignals(sig);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    return fetchData();
+  }, [fetchData]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    // setState hanya di callback promise — bukan sinkron di badan effect.
+    void fetchData();
+  }, [fetchData]);
 
   /**
    * Jalankan beberapa scan dan tampilkan APA YANG SCAN ITU HASILKAN.
@@ -71,11 +84,14 @@ export default function OverviewContent() {
 
     const published: Signal[] = [];
     const shadow: ShadowSignal[] = [];
-    const failed: string[] = [];
+    const failed: ScanResult["failed"] = [];
 
     settled.forEach((r, i) => {
       if (r.status !== "fulfilled") {
-        failed.push(jobs[i][0]);
+        failed.push({
+          market: jobs[i][0],
+          reason: describeApiError(r.reason, `scan ${jobs[i][0]}`).title,
+        });
         return;
       }
       published.push(...(r.value.signals ?? []));
@@ -93,7 +109,7 @@ export default function OverviewContent() {
       signals_found: published.length,
       message:
         parts.join(" · ") +
-        (failed.length ? ` (${failed.join(", ")})` : ""),
+        (failed.length ? ` (${failed.map((f) => f.reason).join("; ")})` : ""),
     };
   };
 
@@ -108,18 +124,20 @@ export default function OverviewContent() {
     <div className="space-y-6 animate-fade-in">
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {/* Ketiga kartu ini membaca JURNAL trade manual (`/stats`), bukan
+            pengukuran forward sinyal. Warna naik/turun pada win rate dicabut:
+            win rate ≥ 50% bukan tanda profit tanpa besar menang/kalah. */}
         <StatCard
-          label="Win Rate"
+          label="Win rate jurnal"
           value={stats ? `${stats.win_rate_pct}%` : "—"}
-          sub={`${stats?.total_trades ?? 0} trades`}
+          sub={`${stats?.total_trades ?? 0} trade manual · bukan forward`}
           icon={Target}
-          trend={stats && stats.win_rate_pct >= 50 ? "up" : "down"}
           loading={loading}
         />
         <StatCard
-          label="Total P&L"
+          label="Total P&L jurnal"
           value={stats ? formatIDR(stats.total_pnl_idr) : "—"}
-          sub="All time"
+          sub="Semua baris, termasuk baris lama"
           icon={DollarSign}
           trend={stats && stats.total_pnl_idr >= 0 ? "up" : "down"}
           loading={loading}
@@ -178,8 +196,13 @@ export default function OverviewContent() {
 
           {scan.failed.length > 0 && (
             <p className="text-xs text-amber-500 border border-amber-500/30 bg-amber-500/10 rounded-lg px-3 py-2">
-              Gagal dijalankan: {scan.failed.join(", ")}. Angka di bawah{" "}
-              <strong>tidak</strong> mencakup market itu.
+              Gagal dijalankan: {scan.failed.map((f) => f.market).join(", ")}. Angka
+              di bawah <strong>tidak</strong> mencakup market itu.
+              {scan.failed.map((f) => (
+                <span key={f.market} className="block mt-0.5 text-[11px]">
+                  {f.reason}
+                </span>
+              ))}
             </p>
           )}
 
@@ -231,6 +254,12 @@ export default function OverviewContent() {
               />
             ))}
           </div>
+        ) : loadError ? (
+          <ApiErrorNotice
+            error={loadError}
+            action="memuat sinyal tersimpan"
+            onRetry={() => void loadData()}
+          />
         ) : signals.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 border border-border rounded-xl bg-card/40">
             <Clock className="w-8 h-8 text-muted-foreground/40 mb-3" />

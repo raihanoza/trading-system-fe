@@ -4,7 +4,9 @@ import { useState } from "react";
 import { Dialog, DialogField, DialogInput } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { describeApiError, isApiError } from "@/lib/api-error";
 import type { Trade } from "@/types";
+import { NOTES_MAX } from "./RecordTradeDialog";
 import { formatPrice } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -34,24 +36,35 @@ export default function CloseTradeDialog({ trade, onClose, onDone }: Props) {
   const quoteCcy = trade.market.includes("stock_idx") ? "IDR" : "USD";
 
   const handleClose = async () => {
-    if (!exitPrice) {
-      toast.error("Exit price wajib diisi");
+    // Pagar yang sama dengan backend: harga exit > 0 dan finite.
+    const price = Number(exitPrice);
+    if (!exitPrice.trim() || !Number.isFinite(price) || price <= 0) {
+      toast.error("Harga exit harus angka lebih besar dari 0.");
+      return;
+    }
+    if (notes.length > NOTES_MAX) {
+      toast.error(`Catatan maksimal ${NOTES_MAX} karakter.`);
       return;
     }
     setSaving(true);
     try {
-      const res = await api.trades.close(trade.id, Number(exitPrice), notes);
+      const res = await api.trades.close(trade.id, price, notes);
       const outcome =
         res.pnl_idr > 0 ? "✅ Win" : res.pnl_idr < 0 ? "❌ Loss" : "➖ Breakeven";
-      toast.success(`Trade closed — ${outcome}`, {
-        description: `P&L Rp${res.pnl_idr.toLocaleString("id-ID")}`,
+      toast.success(`Trade ditutup — ${outcome}`, {
+        description: `P&L Rp${res.pnl_idr.toLocaleString("id-ID")} (dihitung server: biaya, arah, kurs)`,
       });
       onDone();
       onClose();
     } catch (e) {
-      toast.error("Failed", {
-        description: e instanceof Error ? e.message : "Unknown error",
-      });
+      const d = describeApiError(e, "menutup trade");
+      toast.error(d.title, { description: [d.description, d.hint].filter(Boolean).join(" ") });
+      // 409 = sudah ditutup (di tab lain / oleh auto-close). Keadaan di layar
+      // basi: muat ulang daftar dan tutup dialog, jangan biarkan dicoba lagi.
+      if (isApiError(e) && (e.kind === "conflict" || e.kind === "not_found")) {
+        onDone();
+        onClose();
+      }
     } finally {
       setSaving(false);
     }
@@ -83,6 +96,8 @@ export default function CloseTradeDialog({ trade, onClose, onDone }: Props) {
             placeholder={`e.g. ${formatPrice(trade.take_profit, trade.market)}`}
             value={exitPrice}
             onChange={(e) => setExitPrice(e.target.value)}
+            min="0"
+            step="any"
             autoFocus
           />
           {gross !== null && (
@@ -106,6 +121,7 @@ export default function CloseTradeDialog({ trade, onClose, onDone }: Props) {
           <DialogInput
             placeholder="e.g. TP hit, SL hit, manual close"
             value={notes}
+            maxLength={NOTES_MAX}
             onChange={(e) => setNotes(e.target.value)}
           />
         </DialogField>

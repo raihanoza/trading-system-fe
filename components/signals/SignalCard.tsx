@@ -21,7 +21,15 @@ import {
 } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { api, getTierSpecs } from "@/lib/api";
-import { computeTierLadder, tierSpec, weightedScoreDetails, type TierLadder } from "@/lib/tiers";
+import {
+  computeTierLadder,
+  formatScore,
+  tierSpec,
+  unknownScorePolicy,
+  weightedScoreDetails,
+  type TierLadder,
+} from "@/lib/tiers";
+import { useRuntime } from "@/lib/runtime";
 import WeightedExplanation from "./WeightedExplanation";
 import { formatGateLabel, getGateDescription } from "@/lib/gates";
 import {
@@ -707,6 +715,10 @@ function RecordChecklist({
   // dimuat, `null` = gagal dimuat (dan itu dibedakan: kalau tak bisa dicek,
   // item korelasi kembali jadi centang manual, bukan diam-diam dianggap aman).
   const [risk, setRisk] = useState<PortfolioRisk | null | undefined>(undefined);
+  const { report } = useRuntime();
+  const paper = report?.backend.runtime?.mode === "paper";
+  // Modal dari backend (konfigurasi atau proyeksi risiko), bukan angka tertanam.
+  const capital = risk?.capital_idr ?? report?.backend.runtime?.config.capital_idr ?? null;
 
   // Fetch posisi terbuka + proyeksi risiko lazy — hanya saat checklist dibuka.
   useEffect(() => {
@@ -744,6 +756,21 @@ function RecordChecklist({
       : signal.tier === "SCOUT"
         ? "bg-blue-500/10 text-blue-400 border-blue-500/25 hover:bg-blue-500/20 hover:border-blue-500/40"
         : "bg-primary/15 text-primary border-primary/25 hover:bg-primary/25 hover:border-primary/40";
+
+  // Mode paper: backend menolak POST /trades/execute (403). Checklist tiga
+  // centang yang berakhir di penolakan hanya membuang waktu — katakan di muka.
+  if (paper) {
+    return (
+      <div
+        className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-300"
+        data-testid="paper-mode-record-notice"
+      >
+        <span className="font-semibold">Mode PAPER</span> — pencatatan eksekusi
+        dinonaktifkan backend karena edge belum terbukti. Sinyal ini tetap dicatat
+        dan dinilai otomatis oleh resolver.
+      </div>
+    );
+  }
 
   if (!open) {
     return (
@@ -848,7 +875,11 @@ function RecordChecklist({
       <ChecklistItem
         checked={rrChecked}
         onToggle={() => setRrChecked((v) => !v)}
-        label={`R:R & lot masuk akal untuk modal Rp3jt (R:R 1:${signal.rr_ratio})`}
+        label={
+          `R:R & lot masuk akal untuk modal ` +
+          (capital != null ? formatIDR(capital) : "Anda") +
+          ` (R:R 1:${signal.rr_ratio})`
+        }
       />
 
       <div className="flex gap-2 pt-1">
@@ -893,6 +924,7 @@ export default function SignalCard({ signal, onTrade }: Props) {
   const [tierMetadata, setTierMetadata] = useState<TierSpecsResponse | null>(null);
   const tiers = tierMetadata?.tiers;
   const scoreDetails = weightedScoreDetails(signal.score_details);
+  const unknownPolicy = unknownScorePolicy(signal.score_details);
   useEffect(() => {
     let alive = true;
     getTierSpecs()
@@ -908,10 +940,13 @@ export default function SignalCard({ signal, onTrade }: Props) {
     ...(Array.isArray(signal.gates_passed) ? signal.gates_passed : []),
     ...(optionalRecorded ? (signal.optional_passed as string[]) : []),
   ];
-  const ladder = !scoreDetails && tiers
+  // Tangga AND hanya untuk sinyal tanpa kebijakan skor (baris lama). Kebijakan
+  // yang tidak dikenali TIDAK dijelaskan dengan aturan AND.
+  const legacy = !scoreDetails && !unknownPolicy;
+  const ladder = legacy && tiers
     ? computeTierLadder(signal.tier, knownTrue, signal.rr_ratio, tiers)
     : null;
-  const spec = !scoreDetails && tiers ? tierSpec(signal.tier, tiers) : undefined;
+  const spec = legacy && tiers ? tierSpec(signal.tier, tiers) : undefined;
 
   // News = absolute-mandatory, jadi selalu lolos untuk sinyal yang tampil;
   // tandai merah hanya kalau eksplisit ada di gates_failed (defensif).
@@ -976,8 +1011,24 @@ export default function SignalCard({ signal, onTrade }: Props) {
             kartu. `evidence_pct` (berapa banyak bukti opsional yang lolos)
             adalah satu-satunya yang bervariasi. */}
         {scoreDetails ? (
-          <span className="text-xs text-muted-foreground font-mono" title="Skor berbobot, bukan peluang menang; belum dikalibrasi untuk kontrak ini.">
-            {scoreDetails.score}/100 skor
+          <span
+            className="flex flex-col items-end text-xs text-muted-foreground font-mono leading-tight"
+            title={
+              `Skor konfluensi ${scoreDetails.policy} (kontrak ${scoreDetails.contract_hash || "?"}): ` +
+              "jumlah poin faktor teknikal, BUKAN probabilitas profit atau peluang menang."
+            }
+          >
+            <span>skor {formatScore(scoreDetails.score)}/100</span>
+            <span className="text-[10px] text-muted-foreground/70">
+              {scoreDetails.policy} · bukan peluang
+            </span>
+          </span>
+        ) : unknownPolicy ? (
+          <span
+            className="text-xs text-amber-400 font-mono"
+            title="Kebijakan skor ini belum dikenali versi UI ini — rinciannya tidak ditafsirkan."
+          >
+            {unknownPolicy}
           </span>
         ) : typeof signal.evidence_pct === "number" ? (
           <div
@@ -1143,6 +1194,12 @@ export default function SignalCard({ signal, onTrade }: Props) {
       {/* D1 — panel "kenapa sinyal ini muncul?" */}
       {scoreDetails ? (
         <WeightedExplanation details={scoreDetails} metadata={tierMetadata} />
+      ) : unknownPolicy ? (
+        <p className="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5 text-[11px] text-amber-300">
+          Skor sinyal ini dihitung kebijakan <span className="font-mono">{unknownPolicy}</span> yang
+          belum dikenali versi UI ini. Rinciannya tidak ditafsirkan dengan aturan lama;
+          perbarui frontend.
+        </p>
       ) : <WhyThisSignal signal={signal} spec={spec} />}
 
       {/* D5 — kapan sinyal ini batal, dinyatakan SEBELUM apa pun terjadi */}

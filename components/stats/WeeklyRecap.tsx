@@ -18,8 +18,8 @@
 
 import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { apiGet } from "@/lib/api";
+import { ApiErrorNotice } from "@/components/system/StateNotice";
 
 interface Hitung {
   n: number;
@@ -90,38 +90,29 @@ function Angka({
 
 export default function WeeklyRecap({ market = "all" }: { market?: string }) {
   const [data, setData] = useState<Recap | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
 
   // Tidak ada setState sinkron di badan efek: selain melanggar aturan lint,
   // `batal` di sini mencegah respons market lama menimpa market baru kalau
   // pengguna berganti tab lebih cepat daripada jaringannya.
   useEffect(() => {
     let batal = false;
-    (async () => {
-      try {
-        const r = await fetch(`${API}/analytics/weekly-recap?market=${market}`);
-        if (!r.ok) throw new Error(`API ${r.status}`);
-        const json = (await r.json()) as Recap;
+    apiGet<Recap>(`/analytics/weekly-recap?market=${encodeURIComponent(market)}`)
+      .then((json) => {
         if (!batal) {
           setData(json);
           setError(null);
         }
-      } catch (e) {
-        if (!batal)
-          setError(e instanceof Error ? e.message : "gagal memuat rekap");
-      }
-    })();
+      })
+      .catch((e: unknown) => {
+        if (!batal) setError(e);
+      });
     return () => {
       batal = true;
     };
   }, [market]);
 
-  if (error)
-    return (
-      <div className="rounded-xl border border-border p-4 text-xs text-muted-foreground">
-        Rekap mingguan tidak bisa dimuat ({error}).
-      </div>
-    );
+  if (error) return <ApiErrorNotice error={error} action="memuat rekap mingguan" />;
   if (!data) return <div className="h-40 rounded-xl border border-border shimmer" />;
 
   const ini = data.minggu_ini;

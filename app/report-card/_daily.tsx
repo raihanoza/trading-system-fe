@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { RefreshCw, MessageSquare } from "lucide-react";
 import { api } from "@/lib/api";
 import type { DailyReportCard } from "@/types";
+import { ApiErrorNotice } from "@/components/system/StateNotice";
 
 /**
  * Kartu harian — teks yang SAMA PERSIS dengan yang dikirim ke WhatsApp 07:00.
@@ -23,7 +24,7 @@ import type { DailyReportCard } from "@/types";
  */
 export default function DailyReportCard() {
   const [data, setData] = useState<DailyReportCard | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
 
   // `setLoading(true)` TIDAK dipanggil di sini: effect yang setState sinkron
@@ -37,9 +38,7 @@ export default function DailyReportCard() {
         setData(d);
         setError(null);
       })
-      .catch((e: unknown) =>
-        setError(e instanceof Error ? e.message : "Gagal memuat kartu harian"),
-      )
+      .catch((e: unknown) => setError(e))
       .finally(() => setLoading(false));
   }, []);
 
@@ -72,14 +71,8 @@ export default function DailyReportCard() {
       </header>
 
       <div className="p-4">
-        {error && (
-          <p className="text-sm text-destructive">
-            {error}
-            <span className="block text-xs text-muted-foreground mt-1">
-              Endpoint <code>/report-card</code> ada sejak 2 Sep 2026 — kalau
-              balasannya 404, API-nya belum di-restart sejak perubahan itu.
-            </span>
-          </p>
+        {error != null && (
+          <ApiErrorNotice error={error} action="memuat kartu harian" />
         )}
 
         {!error && !data && loading && (

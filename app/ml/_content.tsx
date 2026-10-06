@@ -1,21 +1,21 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { formatIDR, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { apiGet, apiSend } from "@/lib/api";
+import { describeApiError } from "@/lib/api-error";
+import { ApiErrorNotice } from "@/components/system/StateNotice";
+import { toast } from "sonner";
 import {
   Brain,
   RefreshCw,
   TrendingUp,
   TrendingDown,
-  Minus,
   AlertTriangle,
   CheckCircle,
   Zap,
   Info,
-  ChevronRight,
 } from "lucide-react";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -117,28 +117,27 @@ function Section({
 }
 
 function WeightBar({ weight }: { weight: number }) {
-  // weight 0.5 - 2.0 → display as -100% to +100%
+  // weight 0.5 - 2.0 = ketergantungan model pada gate, BUKAN arah manfaat.
+  // Hijau/merah dicabut 4 Okt 2026: warna untung/rugi menyatakan arah yang
+  // tidak diukur oleh feature importance (tak bertanda).
   const pct = ((weight - 0.5) / 1.5) * 100;
-  const isPos = weight >= 1.1;
-  const isNeg = weight <= 0.9;
-  const barColor = isPos
-    ? "bg-emerald-500"
-    : isNeg
-      ? "bg-red-500"
-      : "bg-secondary-foreground/20";
+  const high = weight >= 1.1;
 
   return (
     <div className="flex items-center gap-2 flex-1">
       <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
         <div
-          className={cn("h-full rounded-full transition-all", barColor)}
+          className={cn(
+            "h-full rounded-full transition-all",
+            high ? "bg-primary/70" : "bg-secondary-foreground/20",
+          )}
           style={{ width: `${Math.max(5, pct)}%` }}
         />
       </div>
       <span
         className={cn(
           "text-xs font-mono w-10 text-right shrink-0 font-semibold",
-          isPos ? "text-profit" : isNeg ? "text-loss" : "text-muted-foreground",
+          high ? "text-foreground" : "text-muted-foreground",
         )}
       >
         ×{weight.toFixed(2)}
@@ -156,37 +155,47 @@ export default function MLContent() {
   const [training, setTraining] = useState(false);
   const [trainResult, setTrainResult] = useState<TrainResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<unknown>(null);
 
-  const loadStatus = useCallback(async () => {
+  // Dulu `fetch(...).then(r => r.json())` tanpa memeriksa status: 500 dari
+  // backend dibaca sebagai objek status kosong, layar tampil "Not Trained".
+  const fetchStatus = useCallback(
+    () =>
+      Promise.all([
+        apiGet<ModelStatus>("/ml/status"),
+        apiGet<{ weights?: WeightItem[] }>("/ml/gate-weights"),
+        apiGet<Insights>("/ml/insights"),
+      ])
+        .then(([s, w, i]) => {
+          setStatus(s);
+          setWeights(w.weights ?? []);
+          setInsights(i);
+          setLoadError(null);
+        })
+        .catch((e: unknown) => setLoadError(e))
+        .finally(() => setLoading(false)),
+    [],
+  );
+
+  const loadStatus = useCallback(() => {
     setLoading(true);
-    try {
-      const [s, w, i] = await Promise.all([
-        fetch(`${API}/ml/status`).then((r) => r.json()),
-        fetch(`${API}/ml/gate-weights`).then((r) => r.json()),
-        fetch(`${API}/ml/insights`).then((r) => r.json()),
-      ]);
-      setStatus(s);
-      setWeights(w.weights ?? []);
-      setInsights(i);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    return fetchStatus();
+  }, [fetchStatus]);
 
   useEffect(() => {
-    loadStatus();
-  }, [loadStatus]);
+    // setState hanya di callback promise — bukan sinkron di badan effect.
+    void fetchStatus();
+  }, [fetchStatus]);
 
   const train = async () => {
     setTraining(true);
     try {
-      const r = await fetch(`${API}/ml/train`, { method: "POST" }).then((r) =>
-        r.json(),
-      );
+      const r = await apiSend<TrainResult>("POST", "/ml/train");
       setTrainResult(r);
       if (r.trained) await loadStatus();
+    } catch (e) {
+      const d = describeApiError(e, "melatih model");
+      toast.error(d.title, { description: [d.description, d.hint].filter(Boolean).join(" ") });
     } finally {
       setTraining(false);
     }
@@ -202,14 +211,24 @@ export default function MLContent() {
           <Brain className="w-5 h-5 text-primary" />
         </div>
         <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-foreground">
+          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
             ML Signal Optimizer
+            <span className="rounded border border-amber-400/30 bg-amber-400/10 px-1.5 py-px text-[10px] font-semibold text-amber-300">
+              EKSPERIMENTAL
+            </span>
           </h3>
           <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
-            Menggunakan Random Forest untuk belajar dari data trading journal
-            kamu. Bukan mengganti logika teknikal — hanya tune{" "}
-            <strong className="text-foreground">bobot setiap gate</strong>{" "}
-            berdasarkan gate mana yang paling sering ada di trade yang profit.
+            Random Forest dilatih dari jurnal trade untuk memisahkan win dan loss
+            berdasarkan gate yang menyala. Hasilnya{" "}
+            <strong className="text-foreground">tidak dipakai scanner</strong>{" "}
+            — skor dan tier dihitung kebijakan tetap (weighted-v1) — dan bukan
+            dasar untuk mengubah tier atau ukuran posisi.
+          </p>
+          <p className="text-[11px] text-amber-400/90 mt-1.5 leading-relaxed">
+            Feature importance tidak bertanda: gate yang sangat membantu model
+            memprediksi KERUGIAN juga mendapat importance tinggi. Data latih belum
+            dipisah per kontrak tier, dan akurasi model belum dibandingkan dengan
+            baseline maupun dikalibrasi (audit 4 Okt 2026, temuan 7).
           </p>
         </div>
         <button
@@ -289,6 +308,12 @@ export default function MLContent() {
             />
           ))}
         </div>
+      ) : loadError ? (
+        <ApiErrorNotice
+          error={loadError}
+          action="memuat status ML"
+          onRetry={() => void loadStatus()}
+        />
       ) : (
         <>
           {/* Model status */}
@@ -352,15 +377,15 @@ export default function MLContent() {
                     },
                     {
                       step: "3",
-                      title: "Gate Weights",
-                      desc: "Model menghasilkan bobot per gate. Gate prediktif → weight naik. Gate yang sering ada di loss → weight turun.",
+                      title: "Importance → bobot tampilan",
+                      desc: "Importance tiap gate dipetakan ke angka 0,5–2. Angka itu menunjukkan seberapa banyak model bergantung pada gate tersebut — BUKAN arah manfaatnya (naik ≠ lebih menguntungkan).",
                       icon: "⚖️",
                     },
                     {
                       step: "4",
-                      title: "Auto Applied",
-                      desc: "Saat scan berikutnya, gate evaluator pakai bobot dari ML. Signal scoring lebih akurat sesuai history kamu.",
-                      icon: "🎯",
+                      title: "Tidak diterapkan otomatis",
+                      desc: "Scanner aktif tidak membaca bobot ini. Skor sinyal tetap dihitung kebijakan tetap weighted-v1; mengubahnya butuh protokol pengujian terpisah.",
+                      icon: "🛑",
                     },
                   ].map((item) => (
                     <div key={item.step} className="flex items-start gap-3">
@@ -405,17 +430,18 @@ export default function MLContent() {
                       <p className="text-xs font-medium text-foreground">
                         {GATE_LABELS[w.gate] ?? w.gate.replace(/_/g, " ")}
                       </p>
+                      {/* Backend melabeli bobot > 1 "positive" — label itu
+                          dibaca dari importance tak bertanda, jadi tidak
+                          ditampilkan sebagai untung/rugi. */}
                       <span
-                        className={cn(
-                          "text-[10px] px-1.5 py-0.5 rounded-md border",
-                          w.direction === "positive"
-                            ? "text-profit bg-profit/10 border-profit/20"
-                            : w.direction === "negative"
-                              ? "text-loss bg-loss/10 border-loss/20"
-                              : "text-muted-foreground bg-secondary border-border",
-                        )}
+                        className="text-[10px] px-1.5 py-0.5 rounded-md border text-muted-foreground bg-secondary border-border"
+                        title={`Label backend: ${w.label} (dari importance tak bertanda)`}
                       >
-                        {w.label}
+                        {w.weight >= 1.1
+                          ? "ketergantungan tinggi"
+                          : w.weight <= 0.9
+                            ? "ketergantungan rendah"
+                            : "netral"}
                       </span>
                     </div>
                     <WeightBar weight={w.weight} />
@@ -424,8 +450,10 @@ export default function MLContent() {
               </div>
               <div className="px-5 py-3 border-t border-border bg-secondary/20">
                 <p className="text-[11px] text-muted-foreground">
-                  ×1.00 = default · ×{">"} 1.10 = gate ini prediktif untuk
-                  profit berdasarkan trade kamu · ×{"<"} 0.90 = kurang prediktif
+                  ×1.00 = default · ×{">"} 1.10 = model lebih bergantung pada gate
+                  ini · ×{"<"} 0.90 = model jarang memakainya. Tidak menyatakan
+                  apakah gate ini menaikkan atau menurunkan peluang profit, dan
+                  tidak dipakai scanner.
                 </p>
               </div>
             </Section>
@@ -434,7 +462,7 @@ export default function MLContent() {
           {/* Insights */}
           {isTrained && insights?.trained && insights.insights && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              <Section title="Gate Paling Prediktif" icon={TrendingUp}>
+              <Section title="Importance tertinggi (tak bertanda)" icon={TrendingUp}>
                 {insights.insights.most_predictive_gates.length === 0 ? (
                   <div className="p-5 text-sm text-muted-foreground">
                     Butuh lebih banyak data
@@ -457,7 +485,7 @@ export default function MLContent() {
                             {g.meaning}
                           </p>
                         </div>
-                        <span className="text-xs font-mono text-profit font-semibold shrink-0">
+                        <span className="text-xs font-mono text-foreground font-semibold shrink-0">
                           ×{g.weight.toFixed(2)}
                         </span>
                       </div>
@@ -466,10 +494,10 @@ export default function MLContent() {
                 )}
               </Section>
 
-              <Section title="Gate Kurang Prediktif" icon={TrendingDown}>
+              <Section title="Importance terendah (tak bertanda)" icon={TrendingDown}>
                 {insights.insights.least_predictive_gates.length === 0 ? (
                   <div className="p-5 text-sm text-muted-foreground">
-                    Semua gate performa baik
+                    Tidak ada gate berimportance rendah
                   </div>
                 ) : (
                   <div className="divide-y divide-border">
@@ -489,7 +517,7 @@ export default function MLContent() {
                             {g.meaning}
                           </p>
                         </div>
-                        <span className="text-xs font-mono text-loss font-semibold shrink-0">
+                        <span className="text-xs font-mono text-muted-foreground font-semibold shrink-0">
                           ×{g.weight.toFixed(2)}
                         </span>
                       </div>
@@ -508,7 +536,8 @@ export default function MLContent() {
                 <Zap className="w-4 h-4 text-primary shrink-0 mt-0.5" />
                 <div>
                   <p className="text-xs font-semibold text-primary mb-0.5">
-                    Rekomendasi dari ML
+                    Teks otomatis model (eksperimental — bukan rekomendasi
+                    mengubah tier atau sizing)
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {insights.insights.recommendation}

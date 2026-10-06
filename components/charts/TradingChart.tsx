@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "@/lib/api";
+import { describeApiError } from "@/lib/api-error";
 import type { ChartData, Evidence, Freshness } from "@/types";
 import { cn } from "@/lib/utils";
 import { Loader2, RefreshCw } from "lucide-react";
@@ -371,9 +372,8 @@ export default function TradingChart({
       seriesRef.current.chart.timeScale().fitContent();
     } catch (err) {
       console.error("Chart load error:", err);
-      setError(
-        err instanceof Error ? err.message : "Failed to load chart data",
-      );
+      const d = describeApiError(err, "memuat chart");
+      setError(`${d.title}. ${d.description}`);
     } finally {
       setLoading(false);
     }
@@ -382,7 +382,10 @@ export default function TradingChart({
   // Trigger data load when chart is ready OR interval/ticker changes
   useEffect(() => {
     if (!ready) return;
-    loadData();
+    // Dijadwalkan, bukan dipanggil sinkron: loadData langsung setState
+    // (react-hooks/set-state-in-effect).
+    const t = setTimeout(() => void loadData(), 0);
+    return () => clearTimeout(t);
   }, [ready, loadData]);
 
   return (

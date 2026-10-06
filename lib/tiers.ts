@@ -22,6 +22,22 @@ export function weightedScoreDetails(
   };
 }
 
+/**
+ * Kebijakan skor yang TIDAK dikenali UI ini (mis. kontrak baru setelah
+ * weighted-v1). Mengembalikan namanya supaya kartu bisa berkata "belum
+ * dikenali" alih-alih diam-diam menjelaskannya dengan aturan AND lama.
+ */
+export function unknownScorePolicy(details: Signal["score_details"]): string | null {
+  if (!details || typeof details.policy !== "string" || !details.policy) return null;
+  return details.policy === "weighted-v1" ? null : details.policy;
+}
+
+/** 66.7333 → "66,7"; bilangan bulat tanpa desimal. Skor ditampilkan, bukan dihitung ulang. */
+export function formatScore(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  return value.toLocaleString("id-ID", { maximumFractionDigits: 1 });
+}
+
 export interface TierLadder {
   currentTier: string;
   nextTier: string | null; // null = sudah tier tertinggi

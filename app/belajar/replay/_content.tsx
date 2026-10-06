@@ -22,8 +22,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 import ReplayChart, { type Bar } from "./_chart";
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { apiGet, apiSend } from "@/lib/api";
+import { describeApiError } from "@/lib/api-error";
 
 interface StateResp {
   cursor: number;
@@ -86,22 +86,22 @@ export default function ReplayContent() {
   // Bar SELALU diminta ulang dari server — tidak ada deret penuh di klien.
   useEffect(() => {
     let batal = false;
-    (async () => {
-      try {
-        const r = await fetch(
-          `${API}/replay/${pasar.value}/${pasar.ticker}` +
-            `?interval=${pasar.interval}&cursor=${cursor}`,
-        );
-        if (!r.ok) throw new Error((await r.text()).slice(0, 120));
-        const json = (await r.json()) as StateResp;
+    apiGet<StateResp>(
+      `/replay/${pasar.value}/${pasar.ticker}` +
+        `?interval=${pasar.interval}&cursor=${cursor}`,
+    )
+      .then((json) => {
         if (!batal) {
           setData(json);
           setError(null);
         }
-      } catch (e) {
-        if (!batal) setError(e instanceof Error ? e.message : "gagal memuat");
-      }
-    })();
+      })
+      .catch((e: unknown) => {
+        if (!batal) {
+          const d = describeApiError(e, "memuat bar replay");
+          setError(`${d.title}. ${d.description}`);
+        }
+      });
     return () => {
       batal = true;
     };
@@ -122,16 +122,11 @@ export default function ReplayContent() {
                 stop_loss: parseFloat(sl),
                 take_profit: parseFloat(tp),
               };
-        const r = await fetch(
-          `${API}/replay/${pasar.value}/${pasar.ticker}/score?interval=${pasar.interval}`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          },
+        const h = await apiSend<Hasil>(
+          "POST",
+          `/replay/${pasar.value}/${pasar.ticker}/score?interval=${pasar.interval}`,
+          body,
         );
-        if (!r.ok) throw new Error((await r.text()).slice(0, 160));
-        const h = (await r.json()) as Hasil;
         const daftar = [h, ...hasil];
         setHasil(daftar);
         setSl("");
@@ -140,14 +135,13 @@ export default function ReplayContent() {
         // keputusan berikutnya tidak tumpang tindih dengan yang baru dinilai.
         setCursor((c) => c + Math.max(1, h.bars_held || 1));
 
-        const rs = await fetch(`${API}/replay/summary`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ hasil: daftar }),
-        });
-        if (rs.ok) setRingkas((await rs.json()) as Ringkasan);
+        // Ringkasan opsional: kegagalannya tidak membatalkan hasil yang sudah ada.
+        await apiSend<Ringkasan>("POST", "/replay/summary", { hasil: daftar })
+          .then(setRingkas)
+          .catch(() => undefined);
       } catch (e) {
-        setError(e instanceof Error ? e.message : "gagal menilai");
+        const d = describeApiError(e, "menilai keputusan");
+        setError(`${d.title}. ${d.description}`);
       } finally {
         setSibuk(false);
       }

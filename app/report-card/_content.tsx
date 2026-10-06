@@ -4,6 +4,10 @@ import { useState, useEffect } from "react";
 import { AlertTriangle, Info } from "lucide-react";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useRuntime } from "@/lib/runtime";
+import MetricGlossary from "@/components/system/MetricGlossary";
+import { ApiErrorNotice } from "@/components/system/StateNotice";
+import type { BackendRuntime, RuntimeReport } from "@/types/runtime";
 import { TIER_CONFIG } from "@/types";
 import type {
   GateLiftRow,
@@ -62,8 +66,12 @@ export default function ReportCardContent() {
   const [market, setMarket] = useState("all");
   const [contract, setContract] = useState<ContractParam>("active");
   const [data, setData] = useState<(ReportCard & { contract?: ContractInfo }) | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
+  const [attempt, setAttempt] = useState(0);
+  const backend = useRuntime().report?.backend;
+  const runtime = backend?.runtime ?? null;
+  const tierContract = backend?.contract ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -76,8 +84,7 @@ export default function ReportCardContent() {
         setError(null);
       })
       .catch((e: unknown) => {
-        if (!cancelled)
-          setError(e instanceof Error ? e.message : "Gagal memuat report card");
+        if (!cancelled) setError(e);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -85,15 +92,20 @@ export default function ReportCardContent() {
     return () => {
       cancelled = true;
     };
-  }, [market, contract]);
+  }, [market, contract, attempt]);
 
   if (loading && !data)
     return <p className="text-sm text-muted-foreground">Memuat…</p>;
   if (error)
     return (
-      <p className="text-sm text-destructive border border-destructive/20 bg-destructive/10 rounded-md p-3">
-        {error}
-      </p>
+      <ApiErrorNotice
+        error={error}
+        action="memuat report card"
+        onRetry={() => {
+          setLoading(true);
+          setAttempt((n) => n + 1);
+        }}
+      />
     );
   if (!data) return null;
 
@@ -164,11 +176,15 @@ export default function ReportCardContent() {
         </div>
       </div>
 
+      <ReadingGuide runtime={runtime} contract={tierContract} />
+
       <EmptyNotice decided={overall.decided} info={info} />
 
       <ReliabilitySection
         curve={data.reliability}
         errorPp={data.calibration_error_pp}
+        contract={tierContract}
+        selected={info?.selected ?? null}
       />
       <TierSection rows={data.by_tier} />
       <GateLiftSection rows={data.gate_lift} />
@@ -328,24 +344,65 @@ function Section({
   );
 }
 
+/**
+ * Batas tafsir halaman ini. Angka di sini DESKRIPTIF: report card tidak
+ * mengeluarkan vonis edge, dan win rate/CI-nya punya asumsi yang perlu
+ * disebut di tempat angka itu dibaca, bukan hanya di dokumen riset.
+ */
+export function ReadingGuide({
+  runtime,
+  contract = null,
+}: {
+  runtime: BackendRuntime | null;
+  contract?: RuntimeReport["backend"]["contract"];
+}) {
+  return (
+    <details className="rounded-lg border border-border bg-card p-4 text-sm" data-testid="reading-guide">
+      <summary className="cursor-pointer font-medium text-foreground">
+        Cara membaca angka di halaman ini
+        <span className="ml-2 text-xs font-normal text-muted-foreground">
+          deskriptif · bukan vonis edge · {runtime ? `mode ${runtime.mode.toUpperCase()}` : "mode belum diketahui"}
+        </span>
+      </summary>
+      <MetricGlossary
+        className="mt-3"
+        runtime={runtime}
+        contract={contract}
+        only={["winrate", "ci", "expectancy", "forward", "confidence", "tier", "paper"]}
+      />
+    </details>
+  );
+}
+
 /** Confidence yang dilaporkan vs winrate yang benar-benar terjadi. */
 function ReliabilitySection({
   curve,
   errorPp,
+  contract,
+  selected,
 }: {
   curve: ReliabilityBucket[];
   errorPp: number | null;
+  contract: RuntimeReport["backend"]["contract"];
+  selected: string | null;
 }) {
+  // Kalibrasi berlaku PER KONTRAK. Klaim lama "confidence terkalibrasi (ECE
+  // 15,11 → 1,9 pp)" berasal dari kontrak AND 29 Agu dan salah untuk
+  // weighted-v1, yang backend-nya sendiri menyatakan belum dikalibrasi.
+  const forActive = contract && selected === contract.spec_hash;
+  const calibrationText = !contract
+    ? "Status kalibrasi confidence tidak diketahui (backend belum menjawab); anggap belum dikalibrasi."
+    : forActive
+      ? contract.confidence_calibrated
+        ? `Backend menyatakan confidence kontrak ${contract.policy} · ${contract.spec_hash} terkalibrasi.`
+        : `Confidence untuk kontrak ${contract.policy} · ${contract.spec_hash} BELUM dikalibrasi — tabel ini mengukur seberapa jauh angkanya meleset, bukan membuktikan kalibrasi.`
+      : `Kontrak yang dipilih (${selected ?? "?"}) bukan kontrak aktif; status kalibrasinya tidak dilaporkan backend.`;
   return (
     <Section
       title="Reliability — confidence vs kenyataan"
       hint={
-        "Sejak 29 Agu 2026 `confidence` adalah perkiraan peluang menang yang " +
-        "dikalibrasi ke hasil terukur (ECE 15,11 → 1,9 pp). Karena belum ada " +
-        "kombinasi gate yang terbukti punya daya pisah, nilainya sama untuk " +
-        "semua sinyal di satu pasar. Baris LAMA di database masih memakai " +
-        "formula proporsi gate, jadi kurva yang mencampur keduanya " +
-        "membandingkan dua penggaris." +
+        calibrationText +
+        " Confidence bukan skor weighted-v1 dan bukan peluang menang yang bisa dipakai mengurutkan sinyal." +
         (errorPp != null ? ` Rata-rata meleset ${errorPp} pp.` : "")
       }
     >
@@ -403,7 +460,7 @@ function TierSection({ rows }: { rows: TierHitRate[] }) {
   return (
     <Section
       title="Hit rate per tier"
-      hint="Dengan interval kepercayaan, supaya tier bersampel kecil tidak terbaca sekuat tier bersampel besar."
+      hint="Tier adalah label ambang skor konfluensi, bukan peringkat kualitas. CI Wilson 95% menganggap sinyal independen; sinyal sehari saling berkorelasi, jadi ketidakpastian nyata lebih lebar. Tier bersampel kecil jangan dibaca sekuat tier bersampel besar."
     >
       {withData.length === 0 ? (
         <p className="text-sm text-muted-foreground">

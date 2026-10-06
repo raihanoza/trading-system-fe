@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Dialog, DialogField, DialogInput } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
+import { describeApiError, isApiError } from "@/lib/api-error";
+import { executionMode, refreshRuntime, useRuntime } from "@/lib/runtime";
 import { formatIDR, formatPrice, cn } from "@/lib/utils";
 import type { Signal } from "@/types";
 import { toast } from "sonner";
@@ -75,10 +77,24 @@ const TIER_GUIDANCE: Record<
   },
 };
 
+export const NOTES_MAX = 2000;
+
+/** null = lolos; selain itu pesan untuk pengguna. */
+export function validateExecuteInput(units: string, notes: string): string | null {
+  const n = Number(units);
+  if (!units.trim() || !Number.isFinite(n) || n <= 0) {
+    return "Units harus angka lebih besar dari 0.";
+  }
+  if (notes.length > NOTES_MAX) return `Catatan maksimal ${NOTES_MAX} karakter.`;
+  return null;
+}
+
 export default function RecordTradeDialog({ signal, onClose, onDone }: Props) {
   const [units, setUnits] = useState("");
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const { report } = useRuntime();
+  const mode = executionMode(report);
 
   // Reset state when signal changes
   const [lastSignalId, setLastSignalId] = useState<number | null>(null);
@@ -93,10 +109,15 @@ export default function RecordTradeDialog({ signal, onClose, onDone }: Props) {
 
   const guidance = TIER_GUIDANCE[signal.tier] ?? TIER_GUIDANCE.STANDARD;
   const suggestedRisk = signal.risk_idr * guidance.suggestedSizeMultiplier;
+  // Mode diketahui dari backend; null = belum terjawab (jalur galat menangani).
+  const paper = mode === "paper";
 
   const handleSave = async () => {
-    if (!units || Number(units) <= 0) {
-      toast.error("Masukkan jumlah units yang valid");
+    // Pagar yang sama dengan model request backend (api/models.py):
+    // units > 0 dan finite, catatan ≤ 2000 karakter. Backend tetap pagar akhir.
+    const problem = validateExecuteInput(units, notes);
+    if (problem) {
+      toast.error(problem);
       return;
     }
     setSaving(true);
@@ -108,9 +129,9 @@ export default function RecordTradeDialog({ signal, onClose, onDone }: Props) {
       onDone();
       onClose();
     } catch (e) {
-      toast.error("Gagal mencatat trade", {
-        description: e instanceof Error ? e.message : "Unknown error",
-      });
+      const d = describeApiError(e, "mencatat trade");
+      toast.error(d.title, { description: [d.description, d.hint].filter(Boolean).join(" ") });
+      if (isApiError(e) && e.kind === "paper_mode") void refreshRuntime();
     } finally {
       setSaving(false);
     }
@@ -128,6 +149,19 @@ export default function RecordTradeDialog({ signal, onClose, onDone }: Props) {
       }}
     >
       <div className="space-y-4">
+        {paper && (
+          <div
+            role="note"
+            data-testid="paper-mode-dialog-notice"
+            className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-[11px] leading-relaxed text-amber-200"
+          >
+            <p className="font-semibold text-amber-300">Mode PAPER aktif</p>
+            Backend menolak pencatatan eksekusi live (HTTP 403) sampai edge
+            terbukti. Tidak ada order uang nyata; sinyal ini tetap diukur otomatis
+            oleh resolver.
+          </div>
+        )}
+
         {/* ✨ NEW: Tier-specific guidance banner */}
         {guidance.warningLevel && (
           <div
@@ -241,12 +275,12 @@ export default function RecordTradeDialog({ signal, onClose, onDone }: Props) {
             step="any"
             autoFocus
           />
-          {isRadar && (
-            <p className="text-[10px] text-yellow-400/80 mt-1">
-              💡 Tips: Untuk Radar, isi units minimal atau pakai 0 untuk paper
-              trade tracking
-            </p>
-          )}
+          {/* "Pakai 0 untuk paper tracking" dicabut 4 Okt 2026: backend kini
+              menolak units ≤ 0 (422), dan mode paper menolak pencatatan
+              eksekusi seluruhnya (403). */}
+          <p className="text-[10px] text-muted-foreground mt-1">
+            Wajib lebih besar dari 0 — jumlah yang benar-benar dieksekusi.
+          </p>
         </DialogField>
 
         {/* Notes */}
@@ -258,6 +292,7 @@ export default function RecordTradeDialog({ signal, onClose, onDone }: Props) {
                 : "Konfirmasi yang dilihat, alasan entry..."
             }
             value={notes}
+            maxLength={NOTES_MAX}
             onChange={(e) => setNotes(e.target.value)}
           />
         </DialogField>
@@ -279,7 +314,8 @@ export default function RecordTradeDialog({ signal, onClose, onDone }: Props) {
           </Button>
           <Button
             onClick={handleSave}
-            disabled={saving}
+            disabled={saving || paper}
+            title={paper ? "Dinonaktifkan: backend dalam mode paper" : undefined}
             className={cn(
               "flex-1",
               isRadar &&

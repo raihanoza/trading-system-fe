@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { formatPrice, formatIDR, cn } from "@/lib/utils";
+import { formatPrice, cn } from "@/lib/utils";
+import { apiGet } from "@/lib/api";
+import { ApiErrorNotice, EmptyState } from "@/components/system/StateNotice";
 import {
   ArrowLeft,
   RefreshCw,
@@ -13,7 +15,6 @@ import {
   Activity,
   Target,
   Zap,
-  AlertTriangle,
   Newspaper,
   BarChart3,
 } from "lucide-react";
@@ -21,8 +22,6 @@ import {
 const TradingChart = dynamic(() => import("@/components/charts/TradingChart"), {
   ssr: false,
 });
-
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -191,30 +190,32 @@ function Section({
 export default function DetailContent({ market, ticker }: Props) {
   const [data, setData] = useState<DetailData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [notFound, setNotFound] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [interval, setInterval] = useState(DEFAULT_INTERVAL[market] ?? "1d");
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      // Fetch per-market overview (lebih ringan)
-      const res = await fetch(`${API}/market/overview/${market}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const overview = await res.json();
-      const row = overview.rows?.find((r: DetailData) => r.ticker === ticker);
-      if (!row) throw new Error("Ticker tidak ditemukan dalam watchlist");
-      setData(row);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load");
-    } finally {
-      setLoading(false);
-    }
-  }, [market, ticker]);
-
   useEffect(() => {
-    load();
-  }, [load]);
+    let cancelled = false;
+    // Fetch per-market overview (lebih ringan). setState hanya di callback.
+    apiGet<{ rows?: DetailData[] }>(`/market/overview/${encodeURIComponent(market)}`)
+      .then((overview) => {
+        if (cancelled) return;
+        const row = overview.rows?.find((r) => r.ticker === ticker) ?? null;
+        setData(row);
+        setNotFound(!row);
+        setError(null);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [market, ticker, attempt]);
 
   if (loading) {
     return (
@@ -242,10 +243,14 @@ export default function DetailContent({ market, ticker }: Props) {
         >
           <ArrowLeft className="w-3.5 h-3.5" /> Back to Market Overview
         </Link>
-        <div className="flex items-start gap-3 px-4 py-3 rounded-xl border border-destructive/20 bg-destructive/5 text-sm text-destructive">
-          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />{" "}
-          {error ?? "Data tidak ditemukan"}
-        </div>
+        {error != null ? (
+          <ApiErrorNotice error={error} action={`memuat ${ticker}`} />
+        ) : (
+          <EmptyState
+            title={notFound ? `${ticker} tidak ada di watchlist ${market}.` : "Data tidak ditemukan."}
+            description="Overview hanya memuat ticker watchlist yang sudah ter-cache di backend."
+          />
+        )}
       </div>
     );
   }
@@ -610,7 +615,10 @@ export default function DetailContent({ market, ticker }: Props) {
       {/* Refresh button */}
       <div className="flex justify-center">
         <button
-          onClick={() => load()}
+          onClick={() => {
+            setLoading(true);
+            setAttempt((n) => n + 1);
+          }}
           className="flex items-center gap-2 px-4 py-2 text-xs font-medium rounded-lg border border-border bg-card hover:bg-secondary transition-all"
         >
           <RefreshCw className="w-3.5 h-3.5" /> Refresh Analysis

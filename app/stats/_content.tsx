@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { formatIDR, cn } from "@/lib/utils";
+import { apiGet } from "@/lib/api";
 import WeeklyRecap from "@/components/stats/WeeklyRecap";
+import { ApiErrorNotice } from "@/components/system/StateNotice";
 
 interface Summary {
   total_trades: number;
@@ -96,32 +98,26 @@ const MARKET_LABEL: Record<string, string> = {
   forex: "💱 Forex",
 };
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
+/**
+ * Warna lampu lalu lintas (≥65 % hijau, <50 % merah) dicabut 4 Okt 2026:
+ * win rate tanpa besar menang/kalah tidak menyatakan untung atau rugi —
+ * kandidat CM1 ber-win rate ±60 % tetap rugi per trade. Jumlah sampel
+ * ditampilkan di samping angkanya.
+ */
 function WinRateBar({ rate, total }: { rate: number | null; total: number }) {
   if (rate === null || total === 0)
-    return <span className="text-xs text-muted-foreground">No data</span>;
-  const color =
-    rate >= 65 ? "bg-emerald-500" : rate >= 50 ? "bg-yellow-500" : "bg-red-500";
+    return <span className="text-xs text-muted-foreground">Belum ada data</span>;
   return (
     <div className="flex items-center gap-2 flex-1">
       <div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden">
         <div
-          className={`h-full rounded-full ${color}`}
+          className="h-full rounded-full bg-muted-foreground/60"
           style={{ width: `${rate}%` }}
         />
       </div>
-      <span
-        className={cn(
-          "text-xs font-semibold font-mono w-10 text-right",
-          rate >= 65
-            ? "text-profit"
-            : rate >= 50
-              ? "text-warning"
-              : "text-loss",
-        )}
-      >
+      <span className="text-xs font-semibold font-mono w-16 text-right text-foreground">
         {rate}%
+        <span className="ml-1 text-[10px] font-normal text-muted-foreground">n={total}</span>
       </span>
     </div>
   );
@@ -185,39 +181,51 @@ export default function StatsContent() {
   const [monthly, setMonthly] = useState<MonthlyRow[]>([]);
   const [sigAcc, setSigAcc] = useState<SignalAccuracy | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [attempt, setAttempt] = useState(0);
 
-  const load = useCallback(async (market: string) => {
-    setLoading(true);
-    setError(null);
-    const q = market !== "all" ? `?market=${market}` : "";
-    try {
-      const [s, t, m, g, tl, mo, sa] = await Promise.all([
-        fetch(`${API}/analytics/summary${q}`).then((r) => r.json()),
-        fetch(`${API}/analytics/by-tier${q}`).then((r) => r.json()),
-        fetch(`${API}/analytics/by-market${q}`).then((r) => r.json()),
-        fetch(`${API}/analytics/gate-accuracy${q}`).then((r) => r.json()),
-        fetch(`${API}/analytics/pnl-timeline${q}`).then((r) => r.json()),
-        fetch(`${API}/analytics/monthly${q}`).then((r) => r.json()),
-        fetch(`${API}/analytics/signal-accuracy${q}`).then((r) => r.json()),
-      ]);
-      setSummary(s);
-      setTiers(t.tiers ?? []);
-      setMarkets(m.markets ?? []);
-      setGates(g.gates ?? []);
-      setTimeline(tl.timeline ?? []);
-      setMonthly(mo.monthly ?? []);
-      setSigAcc(sa);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load analytics");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
+  // Dulu tujuh `fetch(...).then(r => r.json())` tanpa memeriksa status: 500
+  // dari backend dibaca sebagai objek kosong dan layar tampil "belum ada
+  // data". Sekarang galat apa pun membatalkan seluruh muatan dan ditampilkan.
   useEffect(() => {
-    load(activeMarket);
-  }, [activeMarket, load]);
+    let cancelled = false;
+    const q = activeMarket !== "all" ? `?market=${encodeURIComponent(activeMarket)}` : "";
+    Promise.all([
+      apiGet<Summary>(`/analytics/summary${q}`),
+      apiGet<{ tiers?: TierRow[] }>(`/analytics/by-tier${q}`),
+      apiGet<{ markets?: MarketRow[] }>(`/analytics/by-market${q}`),
+      apiGet<{ gates?: GateRow[] }>(`/analytics/gate-accuracy${q}`),
+      apiGet<{ timeline?: TimelinePoint[] }>(`/analytics/pnl-timeline${q}`),
+      apiGet<{ monthly?: MonthlyRow[] }>(`/analytics/monthly${q}`),
+      apiGet<SignalAccuracy>(`/analytics/signal-accuracy${q}`),
+    ])
+      .then(([s, t, m, g, tl, mo, sa]) => {
+        if (cancelled) return;
+        setSummary(s);
+        setTiers(t.tiers ?? []);
+        setMarkets(m.markets ?? []);
+        setGates(g.gates ?? []);
+        setTimeline(tl.timeline ?? []);
+        setMonthly(mo.monthly ?? []);
+        setSigAcc(sa);
+        setError(null);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeMarket, attempt]);
+
+  const selectMarket = (m: string) => {
+    if (m === activeMarket) return;
+    setLoading(true);
+    setActiveMarket(m);
+  };
 
   const activeLabel =
     MARKET_FILTERS.find((f) => f.value === activeMarket)?.label ?? "All";
@@ -229,7 +237,7 @@ export default function StatsContent() {
         {MARKET_FILTERS.map((f) => (
           <button
             key={f.value}
-            onClick={() => setActiveMarket(f.value)}
+            onClick={() => selectMarket(f.value)}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all",
               activeMarket === f.value
@@ -253,10 +261,15 @@ export default function StatsContent() {
       <WeeklyRecap market={activeMarket} />
 
       {/* Error */}
-      {error && (
-        <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-4 text-sm text-destructive">
-          {error} — pastikan backend berjalan.
-        </div>
+      {error != null && (
+        <ApiErrorNotice
+          error={error}
+          action="memuat analytics"
+          onRetry={() => {
+            setLoading(true);
+            setAttempt((n) => n + 1);
+          }}
+        />
       )}
 
       {/* Loading */}
@@ -294,13 +307,17 @@ export default function StatsContent() {
       {/* Main content */}
       {!loading && !error && summary && summary.total_trades > 0 && (
         <>
+          <p className="text-[11px] text-muted-foreground">
+            Angka di bawah dari jurnal trade manual, bukan pengukuran forward
+            sinyal (lihat Report Card). Win rate perlu dibaca bersama rata-rata
+            menang/kalah; sampel kecil tidak bermakna.
+          </p>
           {/* Key Metrics */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             <StatCard
-              label="Win Rate"
+              label={`Win rate jurnal (n=${summary.win_count + summary.loss_count})`}
               value={`${summary.win_rate_pct}%`}
               sub={`${summary.win_count}W / ${summary.loss_count}L`}
-              trend={summary.win_rate_pct >= 50 ? "up" : "down"}
             />
             <StatCard
               label="Total P&L"
